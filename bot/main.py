@@ -15,6 +15,12 @@ log = logging.getLogger("goblin-bot")
 
 
 async def main():
+    if not config.BOT_TOKEN:
+        raise RuntimeError(
+            "Переменная BOT_TOKEN не задана. "
+            "Локально — в .env, на сервере — в переменных стека Portainer."
+        )
+
     # Если задан прокси (Telegram заблокирован в РФ) — гоним трафик через него
     session = None
     if config.TELEGRAM_PROXY:

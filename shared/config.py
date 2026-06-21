@@ -9,19 +9,23 @@ except ImportError:
     pass
 
 # --- Telegram ---
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+# Обязателен для bot/main.py; api/main.py его не требует.
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+TELEGRAM_PROXY = os.environ.get("TELEGRAM_PROXY", "").strip() or None
 
+# --- PostgreSQL (postgres-main, БД sfl) ---
 DB_HOST = os.environ.get("DB_HOST", "postgres-main")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
 DB_NAME = os.environ.get("DB_NAME", "sfl")
 DB_USER = os.environ.get("DB_USER", "goblin")
-DB_PASSWORD = os.environ["DB_PASSWORD"]
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 # --- SFL API ---
 SFL_API_BASE = os.environ.get("SFL_API_BASE", "https://api.sunflower-land.com")
 # Ключ авторизации community API (передаётся в заголовке x-api-key)
 SFL_API_KEY = os.environ.get("SFL_API_KEY", "").strip() or None
-SFL_PROXY = os.environ.get("SFL_PROXY", "").strip() or None
+# Прокси для запросов к SFL API. Если не задан — берём тот же, что для Telegram.
+SFL_PROXY = os.environ.get("SFL_PROXY", "").strip() or TELEGRAM_PROXY
 # Ссылка на ферму для отображения
 FARM_URL_TEMPLATE = os.environ.get(
     "FARM_URL_TEMPLATE", "https://sunflower-land.com/play/#/visit/{farm_id}"

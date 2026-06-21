@@ -1,30 +1,51 @@
 services:
   goblin-bot:
-    build: .
-    image: goblin-bot:latest        
+    image: ghcr.io/dionis404/goblin-bot:latest
     container_name: goblin-bot
     command: python -m bot.main
     restart: unless-stopped
-    env_file: .env
-    networks:
-      - shared-net
-    dns:                            =
-      - 8.8.8.8
-      - 1.1.1.1
-
-  goblin-api:
-    build: .
-    image: goblin-bot:latest
-    container_name: goblin-api
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
-    restart: unless-stopped
-    env_file: .env
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
+      DB_HOST: ${DB_HOST:-postgres-main}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-sfl}
+      DB_USER: ${DB_USER:-goblin}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SFL_API_BASE: ${SFL_API_BASE:-https://api.sunflower-land.com}
+      SFL_API_KEY: ${SFL_API_KEY}
+      SFL_PROXY: ${SFL_PROXY:-}
+      FARM_URL_TEMPLATE: ${FARM_URL_TEMPLATE:-https://sunflower-land.com/play/#/visit/{farm_id}}
+      API_RATE_PER_SEC: ${API_RATE_PER_SEC:-2}
+      API_CONCURRENCY: ${API_CONCURRENCY:-1}
+      USER_COOLDOWN_SEC: ${USER_COOLDOWN_SEC:-5}
+      API_MAX_RETRIES: ${API_MAX_RETRIES:-3}
+      API_RETRY_BACKOFF: ${API_RETRY_BACKOFF:-2}
     networks:
       - shared-net
     dns:
       - 8.8.8.8
       - 1.1.1.1
 
+  goblin-api:
+    image: ghcr.io/dionis404/goblin-bot:latest
+    container_name: goblin-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_HOST:-postgres-main}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-sfl}
+      DB_USER: ${DB_USER:-goblin}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BOT_TOKEN: "not-used-by-api"
+      SFL_API_KEY: ${SFL_API_KEY}
+    networks:
+      - shared-net
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+  
 
 networks:
   shared-net:
