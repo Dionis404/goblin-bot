@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 
 from bot.channel import router as channel_router
 from bot.handlers import router
-from shared import config, db, telegram_posts
+from shared import config, db
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("goblin-bot")
@@ -37,15 +37,13 @@ async def main():
     dp.include_router(router)
     dp.include_router(channel_router)
 
-    # Прогреваем пулы соединений (sfl + БД сайта goblincodex)
+    # Прогреваем пул соединений
     await db.get_pool()
-    await telegram_posts.get_pool()
     log.info("Бот запущен, начинаю polling…")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query", "channel_post"])
     finally:
         await db.close_pool()
-        await telegram_posts.close_pool()
 
 
 if __name__ == "__main__":

@@ -10,14 +10,14 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - Записывает привязку в БД (одна ферма ↔ один Telegram, без смены)
 - В группах молчит — обрабатывает только личные сообщения
 - Защита от rate limit API (throttle + anti-spam + retry на 429)
-- Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` БД сайта (заменяет собой прежний вебхук на сайте, конфликтовавший с polling)
+- Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` (заменяет собой прежний вебхук на сайте, конфликтовавший с polling)
 
 Параллельно работает FastAPI-сервис: `GET /community/farmers` отдаёт список фермеров для страницы сообщества на сайте.
 
 ## Стек
 
 - Python 3.13, aiogram 3, FastAPI, asyncpg
-- PostgreSQL (общая БД `sfl` с другими сервисами проекта; отдельное подключение к БД `goblincodex` сайта — для `telegram_posts`)
+- PostgreSQL (общая БД `sfl` с другими сервисами проекта)
 - Docker / Docker Compose
 
 ## Структура
