@@ -20,6 +20,17 @@ DB_NAME = os.environ.get("DB_NAME", "sfl")
 DB_USER = os.environ.get("DB_USER", "goblin")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
+# --- PostgreSQL сайта goblincodex (БД goblincodex, таблица telegram_posts) ---
+# Отдельная БД/контейнер от postgres-main — сайт и бот исторически на разных стеках.
+GOBLINCODEX_DB_HOST = os.environ.get("GOBLINCODEX_DB_HOST", "postgres")
+GOBLINCODEX_DB_PORT = int(os.environ.get("GOBLINCODEX_DB_PORT", "5432"))
+GOBLINCODEX_DB_NAME = os.environ.get("GOBLINCODEX_DB_NAME", "goblincodex")
+GOBLINCODEX_DB_USER = os.environ.get("GOBLINCODEX_DB_USER", "goblin")
+GOBLINCODEX_DB_PASSWORD = os.environ.get("GOBLINCODEX_DB_PASSWORD")
+
+# Канал, посты которого зеркалируются в telegram_posts (без @)
+TELEGRAM_POSTS_CHANNEL = os.environ.get("TELEGRAM_POSTS_CHANNEL", "URGSFL")
+
 # --- SFL API ---
 SFL_API_BASE = os.environ.get("SFL_API_BASE", "https://api.sunflower-land.com")
 # Ключ авторизации community API (передаётся в заголовке x-api-key)
