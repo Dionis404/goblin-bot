@@ -1,8 +1,20 @@
 """Общий слой доступа к БД (asyncpg pool)."""
+import json
+
 import asyncpg
 from shared import config
 
 _pool: asyncpg.Pool | None = None
+
+
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    # jsonb <-> dict напрямую, без ручной (де)сериализации в вызывающем коде.
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -17,6 +29,7 @@ async def get_pool() -> asyncpg.Pool:
             password=config.DB_PASSWORD,
             min_size=1,
             max_size=5,
+            init=_init_connection,
         )
     return _pool
 
