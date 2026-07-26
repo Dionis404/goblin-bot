@@ -154,3 +154,12 @@ async def cancel(callback: CallbackQuery):
         "Окей, отменил. Пришли номер фермы заново, когда будешь готов."
     )
     await callback.answer()
+
+
+@router.message()
+async def handle_unknown(message: Message):
+    await message.answer(
+        "🤖 Я пока не умею общаться с фермерами и давать советы — "
+        "но в нашем чате тебе точно помогут!\n\n"
+        "👉 <a href=\"https://t.me/+hSm5ZeGb7ohhYzhi\">Присоединиться к чату</a>"
+    )
