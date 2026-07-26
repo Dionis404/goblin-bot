@@ -77,7 +77,13 @@ query ($pool: String!, $lastId: String!, $page: Int!) {
     first: $page
     orderBy: id
     orderDirection: asc
-    where: { pool: $pool, liquidity_gt: 0, id_gt: $lastId }
+    where: {
+      pool: $pool
+      liquidity_gt: 0
+      id_gt: $lastId
+      tickLower_: { tickIdx: -887220 }
+      tickUpper_: { tickIdx: 887220 }
+    }
   ) {
     id
     owner
