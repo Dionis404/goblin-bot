@@ -2,12 +2,12 @@
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from bot import sfl_api
 from bot.keyboards import confirm_keyboard
-from shared import db
+from shared import config, db
 
 router = Router()
 log = logging.getLogger(__name__)
@@ -154,6 +154,28 @@ async def cancel(callback: CallbackQuery):
         "Окей, отменил. Пришли номер фермы заново, когда будешь готов."
     )
     await callback.answer()
+
+
+@router.message(Command("refresh_lp"))
+async def refresh_lp(message: Message):
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    status_msg = await message.answer("🔄 Собираю лидерборд LP (может занять минуту)…")
+    try:
+        from jobs.lp_leaderboard import run_lp_leaderboard
+        result = await run_lp_leaderboard()
+    except Exception:
+        log.exception("Ошибка обновления LP-лидерборда")
+        await status_msg.edit_text("⚠️ Не удалось обновить лидерборд, смотри логи.")
+        return
+
+    await status_msg.edit_text(
+        f"✅ Лидерборд обновлён.\n"
+        f"Кошельков: <b>{result['wallets']}</b>\n"
+        f"Блок: <code>{result['block']}</code>\n"
+        f"TVL: <b>${result['total_tvl']:,.0f}</b>".replace(",", " ")
+    )
 
 
 @router.message()

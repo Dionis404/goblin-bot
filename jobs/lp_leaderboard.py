@@ -12,6 +12,7 @@ LP-лидерборд пула Uniswap v3 (Base) — топ-500 кошелько
   python -m jobs.lp_leaderboard
   или run_lp_leaderboard() из планировщика/cron.
 """
+import asyncio
 import logging
 import math
 import os
@@ -199,8 +200,14 @@ def build_leaderboard() -> tuple[list[dict], int, float]:
 # ---------------------------------------------------------------- main ------
 
 async def run_lp_leaderboard() -> dict:
-    """Собирает лидерборд и записывает его в lp_current / lp_meta."""
-    rows, block, total_tvl, flower_price_usd = build_leaderboard()
+    """
+    Собирает лидерборд и записывает его в lp_current / lp_meta.
+
+    build_leaderboard() делает блокирующие HTTP-запросы (httpx sync),
+    поэтому выполняется в отдельном потоке — не блокирует event loop
+    вызывающего процесса (это важно при запуске из бота).
+    """
+    rows, block, total_tvl, flower_price_usd = await asyncio.to_thread(build_leaderboard)
 
     pool = await db.get_pool()
     await lp_leaderboard.replace_leaderboard(
@@ -223,5 +230,4 @@ async def _main() -> None:
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(_main())

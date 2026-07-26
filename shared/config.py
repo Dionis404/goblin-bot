@@ -45,3 +45,8 @@ API_RETRY_BACKOFF = float(os.environ.get("API_RETRY_BACKOFF", "2"))   # базо
 # --- API (FastAPI) ---
 API_HOST = os.environ.get("API_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("API_PORT", "8000"))
+
+# --- Администраторы бота (доступ к служебным командам, например /refresh_lp) ---
+ADMIN_TELEGRAM_IDS = {
+    int(x) for x in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip()
+}
