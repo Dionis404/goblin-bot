@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared import db, farm_cache
+from shared import db, farm_cache, lp_leaderboard
 
 
 @asynccontextmanager
@@ -107,3 +107,34 @@ async def force_refresh_farm(farm_id: int, background_tasks: BackgroundTasks):
     await farm_cache.ensure_placeholder(pool, farm_id)
     background_tasks.add_task(farm_cache.refresh_farm, farm_id, pool)
     return {"status": "refreshing"}
+
+
+# --- LP-лидерборд (lp_current / lp_meta) ---
+
+@app.get("/lp/leaderboard")
+async def get_lp_leaderboard():
+    """Топ-500 LP-провайдеров пула FLOWER/USDC + метаданные последнего обновления."""
+    pool = await db.get_pool()
+    rows = await lp_leaderboard.get_leaderboard(pool)
+    meta = await lp_leaderboard.get_meta(pool)
+
+    return {
+        "meta": {
+            "updated_at": meta["updated_at"] if meta else None,
+            "block": meta["block"] if meta else None,
+            "flower_price_usd": float(meta["flower_price_usd"]) if meta and meta["flower_price_usd"] is not None else None,
+            "total_tvl": float(meta["total_tvl"]) if meta and meta["total_tvl"] is not None else None,
+            "wallets": meta["wallets"] if meta else None,
+        },
+        "leaderboard": [
+            {
+                "owner": r["owner"],
+                "rank": r["rank"],
+                "prev_rank": r["prev_rank"],
+                "value_usd": float(r["value_usd"]) if r["value_usd"] is not None else None,
+                "positions": r["positions"],
+                "farm_id": r["farm_id"],
+            }
+            for r in rows
+        ],
+    }
