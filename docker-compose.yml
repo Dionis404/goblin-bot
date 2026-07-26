@@ -22,6 +22,10 @@ services:
       USER_COOLDOWN_SEC: ${USER_COOLDOWN_SEC:-5}
       API_MAX_RETRIES: ${API_MAX_RETRIES:-3}
       API_RETRY_BACKOFF: ${API_RETRY_BACKOFF:-2}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS:-}
+      GRAPH_API_KEY: ${GRAPH_API_KEY}
+      SUBGRAPH_ID: ${SUBGRAPH_ID}
+      POOL: ${POOL:-0xafe30319a948f322585fafc1cab1671a47eb3786}
     networks:
       - shared-net
     dns:
