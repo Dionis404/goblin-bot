@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS farm_cache (
     farm_id            BIGINT PRIMARY KEY,
-    data               JSONB NOT NULL,
+    data               JSONB,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     is_refreshing      BOOLEAN DEFAULT false,
     tracked            BOOLEAN DEFAULT true,
