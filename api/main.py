@@ -87,15 +87,21 @@ async def get_farms(ids: str, background_tasks: BackgroundTasks):
         await farm_cache.ensure_placeholder(pool, fid)
         background_tasks.add_task(farm_cache.refresh_farm, fid, pool)
 
+    def serialize(fid: int):
+        row = by_id.get(fid)
+        if row is None or row["data"] is None:
+            return None
+        return {
+            "data": row["data"],
+            "updated_at": row["updated_at"].isoformat(),
+        }
+
     result = {}
     for fid in farm_ids:
         row = by_id.get(fid)
-        if row is None:
-            result[fid] = None
-            continue
-        if farm_cache.is_stale(row["updated_at"]):
+        if row is not None and farm_cache.is_stale(row["updated_at"]):
             background_tasks.add_task(farm_cache.refresh_farm, fid, pool)
-        result[fid] = row["data"]
+        result[str(fid)] = serialize(fid)
         await farm_cache.touch_last_requested(pool, fid)
 
     return result
