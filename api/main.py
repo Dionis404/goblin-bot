@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared import db, farm_cache, lp_leaderboard
+from shared import auctions, db, farm_cache, lp_leaderboard
 
 
 @asynccontextmanager
@@ -143,4 +143,43 @@ async def get_lp_leaderboard():
             }
             for r in rows
         ],
+    }
+
+
+# --- Аукционы (auctions / auction_results) — read-only, пишет auctioneer-bot ---
+
+@app.get("/api/auctions")
+async def get_auctions(upcoming: bool = False):
+    if not upcoming:
+        raise HTTPException(status_code=400, detail="Поддерживается только upcoming=true")
+
+    pool = await db.get_pool()
+    rows = await auctions.list_upcoming(pool)
+    return [
+        {
+            "auction_id": r["auction_id"],
+            "item_name": r["item_name"],
+            "item_type": r["item_type"],
+            "supply": r["supply"],
+            "sfl_price": float(r["sfl_price"]) if r["sfl_price"] is not None else None,
+            "ingredients": r["ingredients"],
+            "start_at": r["start_at"],
+            "end_at": r["end_at"],
+        }
+        for r in rows
+    ]
+
+
+@app.get("/api/auctions/{auction_id}/results")
+async def get_auction_results(auction_id: str):
+    pool = await db.get_pool()
+    row = await auctions.get_results(pool, auction_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Результаты аукциона ещё не готовы")
+
+    return {
+        "my_status": row["my_status"],
+        "participant_count": row["participant_count"],
+        "supply": row["supply"],
+        "leaderboard": row["leaderboard"],
     }
