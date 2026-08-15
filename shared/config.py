@@ -50,3 +50,9 @@ API_PORT = int(os.environ.get("API_PORT", "8000"))
 ADMIN_TELEGRAM_IDS = {
     int(x) for x in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip()
 }
+
+# --- Уведомления о подписке/отписке от канала @URGSFL ---
+# Кому в личку слать уведомления и кто командой /subscriber_notify управляет тогглом.
+# Берём первого (единственного) администратора из ADMIN_TELEGRAM_IDS — отдельная
+# переменная не нужна, пока админ один.
+NOTIFY_ADMIN_TELEGRAM_ID = next(iter(ADMIN_TELEGRAM_IDS), None)

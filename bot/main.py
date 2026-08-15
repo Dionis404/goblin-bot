@@ -9,6 +9,7 @@ from aiogram.enums import ParseMode
 
 from bot.channel import router as channel_router
 from bot.handlers import router
+from bot.subscriber_notify import router as subscriber_notify_router
 from shared import config, db, telegram_stats
 
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +54,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     dp.include_router(channel_router)
+    dp.include_router(subscriber_notify_router)
 
     # Прогреваем пул соединений
     await db.get_pool()
@@ -61,7 +63,9 @@ async def main():
 
     log.info("Бот запущен, начинаю polling…")
     try:
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "channel_post"])
+        await dp.start_polling(
+            bot, allowed_updates=["message", "callback_query", "channel_post", "chat_member"]
+        )
     finally:
         stats_task.cancel()
         await db.close_pool()

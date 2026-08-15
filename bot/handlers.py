@@ -7,7 +7,8 @@ from aiogram.types import CallbackQuery, Message
 
 from bot import sfl_api
 from bot.keyboards import confirm_keyboard
-from shared import config, db
+from bot.subscriber_notify import SETTING_KEY as SUBSCRIBER_NOTIFY_KEY
+from shared import bot_settings, config, db
 
 router = Router()
 log = logging.getLogger(__name__)
@@ -175,6 +176,30 @@ async def refresh_lp(message: Message):
         f"Кошельков: <b>{result['wallets']}</b>\n"
         f"Блок: <code>{result['block']}</code>\n"
         f"TVL: <b>${result['total_tvl']:,.0f}</b>".replace(",", " ")
+    )
+
+
+@router.message(Command("subscriber_notify"))
+async def subscriber_notify_toggle(message: Message):
+    if config.NOTIFY_ADMIN_TELEGRAM_ID is None or message.from_user.id != config.NOTIFY_ADMIN_TELEGRAM_ID:
+        return
+
+    args = message.text.split(maxsplit=1)
+    arg = args[1].strip().lower() if len(args) > 1 else ""
+
+    if arg not in ("on", "off"):
+        enabled = await bot_settings.get_bool(SUBSCRIBER_NOTIFY_KEY, default=True)
+        await message.answer(
+            f"Уведомления о подписке/отписке от @{config.TELEGRAM_POSTS_CHANNEL}: "
+            f"<b>{'включены' if enabled else 'выключены'}</b>.\n"
+            f"Переключить: /subscriber_notify on|off"
+        )
+        return
+
+    await bot_settings.set_bool(SUBSCRIBER_NOTIFY_KEY, arg == "on")
+    await message.answer(
+        f"{'✅ Включил' if arg == 'on' else '🔕 Выключил'} уведомления о подписке/отписке "
+        f"от @{config.TELEGRAM_POSTS_CHANNEL}."
     )
 
 
