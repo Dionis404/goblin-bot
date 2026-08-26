@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from bot.channel import router as channel_router
 from bot.handlers import router
@@ -112,6 +113,12 @@ async def main():
     dp.include_router(router)
     dp.include_router(channel_router)
     dp.include_router(subscriber_notify_router)
+
+    # Список команд для меню "☰" в Telegram — иначе игроки не узнают про /menu
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Привязать ферму"),
+        BotCommand(command="menu", description="Меню: отслеживание лидерборда тикетов"),
+    ])
 
     # Прогреваем пул соединений
     await db.get_pool()
