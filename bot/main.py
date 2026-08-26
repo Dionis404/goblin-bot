@@ -114,12 +114,12 @@ async def main():
     dp.include_router(channel_router)
     dp.include_router(subscriber_notify_router)
 
-    # Список команд для меню "☰" в Telegram — иначе игроки не узнают про /menu.
+    # Список команд для меню "☰" в Telegram — иначе игроки не узнают про /tracking_lb.
     # Старые команды могли быть заданы с другим scope (например, AllPrivateChats) —
     # такой scope перекрывает Default, поэтому очищаем оба явно перед записью новых.
     commands = [
         BotCommand(command="start", description="Привязать ферму"),
-        BotCommand(command="menu", description="Меню: отслеживание лидерборда тикетов"),
+        BotCommand(command="tracking_lb", description="Отслеживание лидерборда тикетов"),
     ]
     await bot.delete_my_commands(scope=BotCommandScopeDefault())
     await bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())

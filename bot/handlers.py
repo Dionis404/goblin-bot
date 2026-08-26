@@ -32,7 +32,7 @@ async def cmd_start(message: Message):
             f"Ты уже привязал ферму <b>#{existing['farm_id']}</b> "
             f"(<b>{existing['game_username'] or 'без ника'}</b>).\n"
             f"Изменить привязанную ферму нельзя.\n\n"
-            f"Настройки — команда /menu.",
+            f"Отслеживание лидерборда тикетов — команда /tracking_lb.",
             reply_markup=menu_keyboard(existing["tickets_tracked"]),
         )
         return
@@ -141,7 +141,7 @@ async def confirm_farm(callback: CallbackQuery):
             f"✅ Готово! Ферма <b>#{farm_id}</b> "
             f"(<b>{farm['username'] or 'без ника'}</b>) привязана к тебе.\n\n"
             f"Теперь ты в сообществе GoblinCodex 🎉\n\n"
-            f"Настройки — команда /menu.",
+            f"Отслеживание лидерборда тикетов — команда /tracking_lb.",
             reply_markup=menu_keyboard(tickets_tracked=False),
         )
     elif status == "telegram_taken":
@@ -183,8 +183,8 @@ async def refresh_lp(message: Message):
     )
 
 
-@router.message(Command("menu"))
-async def cmd_menu(message: Message):
+@router.message(Command("tracking_lb"))
+async def cmd_tracking_lb(message: Message):
     farmer = await db.get_farmer_by_telegram(message.from_user.id)
     if not farmer:
         await message.answer(
@@ -194,8 +194,8 @@ async def cmd_menu(message: Message):
 
     status = "включено ✅" if farmer["tickets_tracked"] else "выключено"
     await message.answer(
-        f"⚙️ Меню фермы <b>#{farmer['farm_id']}</b>\n\n"
-        f"Отслеживание лидерборда тикетов: <b>{status}</b>\n"
+        f"🎟 Отслеживание лидерборда тикетов — ферма <b>#{farmer['farm_id']}</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
         f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
         reply_markup=menu_keyboard(farmer["tickets_tracked"]),
     )
@@ -214,8 +214,8 @@ async def toggle_tickets_tracking(callback: CallbackQuery):
 
     status = "включено ✅" if enabled else "выключено"
     await callback.message.edit_text(
-        f"⚙️ Меню фермы <b>#{farmer['farm_id']}</b>\n\n"
-        f"Отслеживание лидерборда тикетов: <b>{status}</b>\n"
+        f"🎟 Отслеживание лидерборда тикетов — ферма <b>#{farmer['farm_id']}</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
         f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
         reply_markup=menu_keyboard(enabled),
     )
