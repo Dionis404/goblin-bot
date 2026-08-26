@@ -6,9 +6,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from bot import sfl_api
-from bot.keyboards import confirm_keyboard
+from bot.keyboards import confirm_keyboard, menu_keyboard
 from bot.subscriber_notify import SETTING_KEY as SUBSCRIBER_NOTIFY_KEY
-from shared import bot_settings, config, db
+from shared import bot_settings, config, db, tickets_leaderboard
 
 router = Router()
 log = logging.getLogger(__name__)
@@ -31,7 +31,9 @@ async def cmd_start(message: Message):
         await message.answer(
             f"Ты уже привязал ферму <b>#{existing['farm_id']}</b> "
             f"(<b>{existing['game_username'] or 'без ника'}</b>).\n"
-            f"Изменить привязанную ферму нельзя.",
+            f"Изменить привязанную ферму нельзя.\n\n"
+            f"Настройки — команда /menu.",
+            reply_markup=menu_keyboard(existing["tickets_tracked"]),
         )
         return
 
@@ -138,7 +140,9 @@ async def confirm_farm(callback: CallbackQuery):
         await callback.message.edit_text(
             f"✅ Готово! Ферма <b>#{farm_id}</b> "
             f"(<b>{farm['username'] or 'без ника'}</b>) привязана к тебе.\n\n"
-            f"Теперь ты в сообществе GoblinCodex 🎉"
+            f"Теперь ты в сообществе GoblinCodex 🎉\n\n"
+            f"Настройки — команда /menu.",
+            reply_markup=menu_keyboard(tickets_tracked=False),
         )
     elif status == "telegram_taken":
         await callback.message.edit_text("У тебя уже привязана ферма. Изменить нельзя.")
@@ -177,6 +181,45 @@ async def refresh_lp(message: Message):
         f"Блок: <code>{result['block']}</code>\n"
         f"TVL: <b>${result['total_tvl']:,.0f}</b>".replace(",", " ")
     )
+
+
+@router.message(Command("menu"))
+async def cmd_menu(message: Message):
+    farmer = await db.get_farmer_by_telegram(message.from_user.id)
+    if not farmer:
+        await message.answer(
+            "У тебя ещё нет привязанной фермы. Пришли номер фермы, чтобы привязать её."
+        )
+        return
+
+    status = "включено ✅" if farmer["tickets_tracked"] else "выключено"
+    await message.answer(
+        f"⚙️ Меню фермы <b>#{farmer['farm_id']}</b>\n\n"
+        f"Отслеживание лидерборда тикетов: <b>{status}</b>\n"
+        f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
+        reply_markup=menu_keyboard(farmer["tickets_tracked"]),
+    )
+
+
+@router.callback_query(F.data.startswith("tickets_tracking:"))
+async def toggle_tickets_tracking(callback: CallbackQuery):
+    farmer = await db.get_farmer_by_telegram(callback.from_user.id)
+    if not farmer:
+        await callback.answer("Сначала привяжи ферму", show_alert=True)
+        return
+
+    enabled = callback.data.split(":", 1)[1] == "on"
+    pool = await db.get_pool()
+    await tickets_leaderboard.set_tracking(pool, callback.from_user.id, enabled)
+
+    status = "включено ✅" if enabled else "выключено"
+    await callback.message.edit_text(
+        f"⚙️ Меню фермы <b>#{farmer['farm_id']}</b>\n\n"
+        f"Отслеживание лидерборда тикетов: <b>{status}</b>\n"
+        f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
+        reply_markup=menu_keyboard(enabled),
+    )
+    await callback.answer()
 
 
 @router.message(Command("subscriber_notify"))

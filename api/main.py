@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared import auctions, db, farm_cache, lp_leaderboard
+from shared import auctions, db, farm_cache, lp_leaderboard, tickets_leaderboard
 
 
 @asynccontextmanager
@@ -140,6 +140,28 @@ async def get_lp_leaderboard():
                 "value_usd": float(r["value_usd"]) if r["value_usd"] is not None else None,
                 "positions": r["positions"],
                 "farm_id": r["farm_id"],
+            }
+            for r in rows
+        ],
+    }
+
+
+# --- Лидерборд тикетов (top500_snapshots) ---
+
+@app.get("/api/tickets/top500")
+async def get_tickets_top500():
+    """Последний почасовой снэпшот глобального топ-500 лидерборда тикетов."""
+    pool = await db.get_pool()
+    rows = await tickets_leaderboard.get_latest_top500(pool)
+
+    return {
+        "updated_at": rows[0]["taken_at"].isoformat() if rows else None,
+        "leaderboard": [
+            {
+                "rank": r["rank"],
+                "farm_id": r["farm_id"],
+                "game_username": r["game_username"],
+                "tickets": r["tickets"],
             }
             for r in rows
         ],

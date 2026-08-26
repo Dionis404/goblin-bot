@@ -26,6 +26,7 @@ services:
       GRAPH_API_KEY: ${GRAPH_API_KEY}
       SUBGRAPH_ID: ${SUBGRAPH_ID}
       POOL: ${POOL:-0xafe30319a948f322585fafc1cab1671a47eb3786}
+      TICKETS_NOTIFY_CHAT_ID: ${TICKETS_NOTIFY_CHAT_ID:-}
     networks:
       - shared-net
     dns:

@@ -56,3 +56,7 @@ ADMIN_TELEGRAM_IDS = {
 # Берём первого (единственного) администратора из ADMIN_TELEGRAM_IDS — отдельная
 # переменная не нужна, пока админ один.
 NOTIFY_ADMIN_TELEGRAM_ID = next(iter(ADMIN_TELEGRAM_IDS), None)
+
+# --- Лидерборд тикетов SFL (ticket_leaderboard_snapshots) ---
+# Группа, куда шлётся еженедельное сравнение мест (ночь с ВС на ПН, 03:00 МСК).
+TICKETS_NOTIFY_CHAT_ID = os.environ.get("TICKETS_NOTIFY_CHAT_ID", "").strip() or None

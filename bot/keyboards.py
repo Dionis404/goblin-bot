@@ -15,3 +15,18 @@ def confirm_keyboard(farm_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def menu_keyboard(tickets_tracked: bool) -> InlineKeyboardMarkup:
+    """Главное меню фермера: тоггл отслеживания лидерборда тикетов."""
+    label = "🎟 Отключить отслеживание тикетов" if tickets_tracked else "🎟 Включить отслеживание тикетов"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"tickets_tracking:{'off' if tickets_tracked else 'on'}",
+                )
+            ]
+        ]
+    )
