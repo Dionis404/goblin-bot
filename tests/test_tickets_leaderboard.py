@@ -1,4 +1,5 @@
 """Тесты для shared/tickets_leaderboard.py: разбор ответа API лидерборда тикетов."""
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -85,3 +86,17 @@ async def test_fetch_top500_assigns_rank_by_position():
     called_url = client.get.call_args.args[0]
     assert called_url.endswith(f"/leaderboard/tickets/{tickets_leaderboard.TOP500_QUERY_FARM_ID}")
     assert client.get.call_args.kwargs["params"] == {"limit": tickets_leaderboard.TOP500_LIMIT}
+
+
+@pytest.mark.asyncio
+async def test_get_top500_at_queries_snapshot_not_after_given_moment():
+    pool = AsyncMock()
+    pool.fetch.return_value = ["fake-row"]
+    at = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+
+    rows = await tickets_leaderboard.get_top500_at(pool, at)
+
+    assert rows == ["fake-row"]
+    query, arg = pool.fetch.call_args.args
+    assert "taken_at <= $1" in query
+    assert arg == at

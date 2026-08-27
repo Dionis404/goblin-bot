@@ -1,5 +1,6 @@
 """FastAPI: данные сообщества для сайта GoblinCodex."""
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -149,10 +150,20 @@ async def get_lp_leaderboard():
 # --- Лидерборд тикетов (top500_snapshots) ---
 
 @app.get("/api/tickets/top500")
-async def get_tickets_top500():
-    """Последний почасовой снэпшот глобального топ-500 лидерборда тикетов."""
+async def get_tickets_top500(at: datetime | None = None):
+    """
+    Снэпшот глобального топ-500 лидерборда тикетов.
+
+    Без параметра `at` — последний собранный снэпшот.
+    С `at` (ISO 8601, например 2026-08-25T03:00:00Z) — снэпшот, ближайший
+    к этому моменту, но не позже него ("как выглядел борд N часов/дней назад").
+    """
     pool = await db.get_pool()
-    rows = await tickets_leaderboard.get_latest_top500(pool)
+    rows = (
+        await tickets_leaderboard.get_top500_at(pool, at)
+        if at is not None
+        else await tickets_leaderboard.get_latest_top500(pool)
+    )
 
     return {
         "updated_at": rows[0]["taken_at"].isoformat() if rows else None,

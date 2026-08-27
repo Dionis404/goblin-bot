@@ -138,6 +138,23 @@ async def get_latest_top500(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     )
 
 
+async def get_top500_at(pool: asyncpg.Pool, at: datetime) -> list[asyncpg.Record]:
+    """
+    Снэпшот топ-500, ближайший к моменту `at`, но не позже него
+    (историческая точка "как выглядел борд на такой-то момент").
+    """
+    return await pool.fetch(
+        """
+        SELECT * FROM top500_snapshots
+        WHERE taken_at = (
+            SELECT MAX(taken_at) FROM top500_snapshots WHERE taken_at <= $1
+        )
+        ORDER BY rank
+        """,
+        at,
+    )
+
+
 async def save_top500_snapshot(pool: asyncpg.Pool, rows: list[dict]) -> None:
     now = datetime.now(timezone.utc)
     await pool.executemany(
