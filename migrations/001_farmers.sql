@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS farmers (
     id                SERIAL PRIMARY KEY,
     telegram_id       BIGINT      UNIQUE NOT NULL,  -- кто привязал (необратимо)
     telegram_username TEXT,                          -- ник в ТГ (@..., может быть NULL)
-    farm_id           INTEGER     UNIQUE NOT NULL,   -- номер фермы (одна ферма = один владелец)
+    farm_id           BIGINT      UNIQUE NOT NULL,   -- номер фермы (одна ферма = один владелец)
     game_username     TEXT,                          -- ник в игре (farm.username, может быть NULL)
     xp                NUMERIC,                        -- farm.bumpkin.experience (level считает сайт)
     balance           NUMERIC,                        -- farm.balance (FLOWER)

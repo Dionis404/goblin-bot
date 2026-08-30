@@ -8,7 +8,7 @@ ALTER TABLE farmers ADD COLUMN IF NOT EXISTS tickets_tracked BOOLEAN NOT NULL DE
 -- и rank <= 1200 — иначе строка не создаётся вовсе.
 CREATE TABLE IF NOT EXISTS ticket_leaderboard_snapshots (
     id           SERIAL PRIMARY KEY,
-    farm_id      INTEGER     NOT NULL,
+    farm_id      BIGINT      NOT NULL,
     rank         INTEGER     NOT NULL,
     tickets      INTEGER     NOT NULL,
     game_username TEXT,

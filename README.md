@@ -50,7 +50,7 @@ goblin-bot/
 
 ## Локальный запуск
 
-1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `008…`).
+1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `010…`).
 2. `cp .env.example .env` → заполнить токены, ключи, пароль БД (см. комментарии в файле).
 3. `pip install -r requirements.txt`
 4. `python -m bot.main` (или `docker compose up --build`)
