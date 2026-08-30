@@ -38,9 +38,12 @@ log = logging.getLogger(__name__)
 DELAY_BETWEEN_POSTS_SEC = 1.0
 
 
-async def run_backfill() -> dict:
-    if not config.BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не задан")
+async def run_backfill(bot: Bot) -> dict:
+    """
+    Использует переданный Bot (например, тот же экземпляр, что уже держит
+    основной polling бота) — отдельная сессия/токен здесь не нужны и создавать
+    второго клиента с тем же BOT_TOKEN небезопасно (конфликт long-polling).
+    """
     if config.NOTIFY_ADMIN_TELEGRAM_ID is None:
         raise RuntimeError("ADMIN_TELEGRAM_IDS пуст — некуда слать служебные копии")
 
@@ -55,52 +58,42 @@ async def run_backfill() -> dict:
     post_ids = [r["id"] for r in rows]
     log.info("К бэкфиллу: %s постов", len(post_ids))
 
-    session = AiohttpSession(proxy=config.TELEGRAM_PROXY) if config.TELEGRAM_PROXY else None
-    bot = Bot(
-        token=config.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        session=session,
-    )
-
     restored = 0
     failed = 0
 
-    try:
-        for post_id in post_ids:
-            try:
-                copied = await bot.copy_message(
-                    chat_id=config.NOTIFY_ADMIN_TELEGRAM_ID,
-                    from_chat_id=f"@{config.TELEGRAM_POSTS_CHANNEL}",
-                    message_id=post_id,
-                )
-                photo = copied.photo[-1] if copied.photo else None
-                if not photo:
-                    log.warning("Пост %s: копия без фото, пропускаю", post_id)
-                    failed += 1
-                    continue
-
-                buffer = await bot.download(photo.file_id)
-                image_data = buffer.read()
-
-                # Обновляем только картинку — текст/дату поста не трогаем,
-                # они уже корректно сохранены исходным bot/channel.py.
-                await pool.execute(
-                    """
-                    UPDATE telegram_posts
-                    SET image_url = $2, image_data = $3, image_content_type = $4
-                    WHERE id = $1
-                    """,
-                    post_id, f"/api/community/posts/{post_id}/image", image_data, "image/jpeg",
-                )
-                restored += 1
-                log.info("Пост %s: картинка восстановлена", post_id)
-            except Exception:
-                log.exception("Пост %s: не удалось восстановить картинку", post_id)
+    for post_id in post_ids:
+        try:
+            copied = await bot.copy_message(
+                chat_id=config.NOTIFY_ADMIN_TELEGRAM_ID,
+                from_chat_id=f"@{config.TELEGRAM_POSTS_CHANNEL}",
+                message_id=post_id,
+            )
+            photo = copied.photo[-1] if copied.photo else None
+            if not photo:
+                log.warning("Пост %s: копия без фото, пропускаю", post_id)
                 failed += 1
+                continue
 
-            await asyncio.sleep(DELAY_BETWEEN_POSTS_SEC)
-    finally:
-        await bot.session.close()
+            buffer = await bot.download(photo.file_id)
+            image_data = buffer.read()
+
+            # Обновляем только картинку — текст/дату поста не трогаем,
+            # они уже корректно сохранены исходным bot/channel.py.
+            await pool.execute(
+                """
+                UPDATE telegram_posts
+                SET image_url = $2, image_data = $3, image_content_type = $4
+                WHERE id = $1
+                """,
+                post_id, f"/api/community/posts/{post_id}/image", image_data, "image/jpeg",
+            )
+            restored += 1
+            log.info("Пост %s: картинка восстановлена", post_id)
+        except Exception:
+            log.exception("Пост %s: не удалось восстановить картинку", post_id)
+            failed += 1
+
+        await asyncio.sleep(DELAY_BETWEEN_POSTS_SEC)
 
     log.info("Бэкфилл завершён: восстановлено %s, не удалось %s", restored, failed)
     return {"restored": restored, "failed": failed, "total": len(post_ids)}
@@ -108,9 +101,19 @@ async def run_backfill() -> dict:
 
 async def _main() -> None:
     logging.basicConfig(level=logging.INFO)
+    if not config.BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан")
+
+    session = AiohttpSession(proxy=config.TELEGRAM_PROXY) if config.TELEGRAM_PROXY else None
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session,
+    )
     try:
-        await run_backfill()
+        await run_backfill(bot)
     finally:
+        await bot.session.close()
         await db.close_pool()
 
 

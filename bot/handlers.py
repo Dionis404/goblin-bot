@@ -183,6 +183,30 @@ async def refresh_lp(message: Message):
     )
 
 
+@router.message(Command("backfill_post_images"))
+async def backfill_post_images(message: Message):
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    status_msg = await message.answer(
+        "🔄 Восстанавливаю картинки старых постов (пришлю копии постов сюда же, может занять время)…"
+    )
+    try:
+        from jobs.backfill_post_images import run_backfill
+        result = await run_backfill(message.bot)
+    except Exception:
+        log.exception("Ошибка бэкфилла картинок постов")
+        await status_msg.edit_text("⚠️ Не удалось выполнить бэкфилл, смотри логи.")
+        return
+
+    await status_msg.edit_text(
+        f"✅ Бэкфилл завершён.\n"
+        f"Восстановлено: <b>{result['restored']}</b>\n"
+        f"Не удалось: <b>{result['failed']}</b>\n"
+        f"Всего к обработке: <b>{result['total']}</b>"
+    )
+
+
 @router.message(Command("tracking_lb"))
 async def cmd_tracking_lb(message: Message):
     farmer = await db.get_farmer_by_telegram(message.from_user.id)
