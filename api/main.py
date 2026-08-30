@@ -2,10 +2,10 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared import auctions, db, farm_cache, lp_leaderboard, tickets_leaderboard
+from shared import auctions, db, farm_cache, lp_leaderboard, telegram_posts, tickets_leaderboard
 
 
 @asynccontextmanager
@@ -114,6 +114,20 @@ async def force_refresh_farm(farm_id: int, background_tasks: BackgroundTasks):
     await farm_cache.ensure_placeholder(pool, farm_id)
     background_tasks.add_task(farm_cache.refresh_farm, farm_id, pool)
     return {"status": "refreshing"}
+
+
+# --- Посты канала @URGSFL (telegram_posts) ---
+
+@app.get("/api/community/posts/{post_id}/image")
+async def get_post_image(post_id: int):
+    row = await telegram_posts.get_post_image(post_id)
+    if row is None or row["image_data"] is None:
+        raise HTTPException(status_code=404, detail="Картинка не найдена")
+
+    return Response(
+        content=row["image_data"],
+        media_type=row["image_content_type"] or "image/jpeg",
+    )
 
 
 # --- LP-лидерборд (lp_current / lp_meta) ---

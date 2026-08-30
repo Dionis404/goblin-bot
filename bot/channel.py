@@ -31,21 +31,24 @@ async def handle_channel_post(message: Message):
     if telegram_posts.is_teletype_link(text, link_preview_href):
         return
 
-    image_url = None
+    image_data = None
+    image_content_type = None
     photo = message.photo[-1] if message.photo else None
     if photo:
         try:
-            file = await message.bot.get_file(photo.file_id)
-            image_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file.file_path}"
+            buffer = await message.bot.download(photo.file_id)
+            image_data = buffer.read()
+            image_content_type = "image/jpeg"  # Telegram отдаёт фото как JPEG
         except Exception:
-            log.exception("Не удалось получить файл фото для поста %s", message.message_id)
+            log.exception("Не удалось скачать фото для поста %s", message.message_id)
 
     try:
         await telegram_posts.save_post(
             post_id=message.message_id,
             message_date=message.date,
             text=text,
-            image_url=image_url,
+            image_data=image_data,
+            image_content_type=image_content_type,
         )
         log.info("Сохранён пост канала #%s (%s)", message.message_id, message.date)
     except Exception:
