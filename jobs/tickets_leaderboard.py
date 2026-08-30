@@ -13,11 +13,11 @@
 import asyncio
 import logging
 
-from shared import db, tickets_leaderboard
+from shared import config, db, tickets_leaderboard
 
 log = logging.getLogger(__name__)
 
-DELAY_BETWEEN_FARMS_SEC = 0.5
+DELAY_BETWEEN_FARMS_SEC = config.TICKETS_DELAY_BETWEEN_FARMS_SEC
 
 
 async def run_tickets_leaderboard() -> dict:

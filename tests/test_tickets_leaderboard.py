@@ -37,6 +37,34 @@ async def test_fetch_farm_rank_finds_own_entry_in_ranking_details():
 
 
 @pytest.mark.asyncio
+async def test_fetch_farm_rank_retries_on_429_then_succeeds(monkeypatch):
+    monkeypatch.setattr(tickets_leaderboard.config, "API_MAX_RETRIES", 3)
+    monkeypatch.setattr(tickets_leaderboard.config, "API_RETRY_BACKOFF", 0)
+
+    payload = {
+        "farmRankingDetails": [{"rank": 934, "farmId": 62559, "id": "Dionis", "count": 9}]
+    }
+    rate_limited = _fake_response({}, status_code=429)
+    rate_limited.headers = {}
+    ok = _fake_response(payload)
+
+    client = AsyncMock()
+    client.get.side_effect = [rate_limited, ok]
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+
+    async def _no_sleep(_seconds):
+        return None
+
+    with patch("shared.tickets_leaderboard.httpx.AsyncClient", return_value=client), \
+         patch("shared.tickets_leaderboard.asyncio.sleep", _no_sleep):
+        result = await tickets_leaderboard.fetch_farm_rank(62559)
+
+    assert result == {"rank": 934, "tickets": 9, "game_username": "Dionis"}
+    assert client.get.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_fetch_farm_rank_raises_when_farm_absent_from_details():
     payload = {"farmRankingDetails": [{"rank": 1, "farmId": 111, "id": "Other", "count": 10}]}
     client = AsyncMock()

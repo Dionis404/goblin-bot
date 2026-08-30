@@ -19,6 +19,7 @@ VIP+level50 на стороне игры). Старый /leaderboard/tickets/{fa
    в час. Пишется только если rank <= RANK_CUTOFF — питает еженедельный
    отчёт в группе.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -44,6 +45,28 @@ def _api_headers() -> dict:
     return {"x-api-key": config.SFL_API_KEY} if config.SFL_API_KEY else {}
 
 
+async def _get_with_retry(client: httpx.AsyncClient, url: str, params: dict) -> httpx.Response:
+    """GET с повторами при 429, уважая Retry-After (у community API строгий лимит)."""
+    for attempt in range(1, config.API_MAX_RETRIES + 1):
+        resp = await client.get(url, params=params, headers=_api_headers())
+        if resp.status_code != 429:
+            return resp
+
+        retry_after = resp.headers.get("Retry-After")
+        wait = (
+            float(retry_after)
+            if retry_after and retry_after.replace(".", "", 1).isdigit()
+            else config.API_RETRY_BACKOFF * attempt
+        )
+        log.warning(
+            "SFL community API 429 (tickets), попытка %s/%s, ждём %.1f с",
+            attempt, config.API_MAX_RETRIES, wait,
+        )
+        await asyncio.sleep(wait)
+
+    return resp
+
+
 async def fetch_farm_rank(farm_id: int) -> dict:
     """
     Возвращает {"rank", "tickets", "game_username"} для конкретной фермы.
@@ -56,11 +79,7 @@ async def fetch_farm_rank(farm_id: int) -> dict:
     url = f"{config.SFL_API_BASE}/community/data"
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.get(
-            url,
-            params={"type": "ticketLeaderboard", "farmId": farm_id},
-            headers=_api_headers(),
-        )
+        resp = await _get_with_retry(client, url, {"type": "ticketLeaderboard", "farmId": farm_id})
         if resp.status_code == 404:
             raise FarmRankNotFound(f"Ферма {farm_id} не найдена в лидерборде тикетов")
         resp.raise_for_status()
@@ -141,14 +160,10 @@ async def fetch_top500() -> list[dict]:
     url = f"{config.SFL_API_BASE}/community/data"
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.get(
+        resp = await _get_with_retry(
+            client,
             url,
-            params={
-                "type": "ticketLeaderboard",
-                "farmId": TOP500_QUERY_FARM_ID,
-                "limit": TOP500_LIMIT,
-            },
-            headers=_api_headers(),
+            {"type": "ticketLeaderboard", "farmId": TOP500_QUERY_FARM_ID, "limit": TOP500_LIMIT},
         )
         resp.raise_for_status()
         data = resp.json()["data"]

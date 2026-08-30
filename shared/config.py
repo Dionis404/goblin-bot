@@ -60,3 +60,6 @@ NOTIFY_ADMIN_TELEGRAM_ID = next(iter(ADMIN_TELEGRAM_IDS), None)
 # --- Лидерборд тикетов SFL (ticket_leaderboard_snapshots) ---
 # Группа, куда шлётся еженедельное сравнение мест (ночь с ВС на ПН, 03:00 МСК).
 TICKETS_NOTIFY_CHAT_ID = os.environ.get("TICKETS_NOTIFY_CHAT_ID", "").strip() or None
+# Пауза между запросами к разным фермам в почасовом сборе — у community API
+# (/community/data?type=ticketLeaderboard) жёсткий лимит, 0.5с даёт сплошной 429.
+TICKETS_DELAY_BETWEEN_FARMS_SEC = float(os.environ.get("TICKETS_DELAY_BETWEEN_FARMS_SEC", "6"))
