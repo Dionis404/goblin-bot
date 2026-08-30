@@ -8,9 +8,10 @@ from shared import tickets_leaderboard
 
 
 def _fake_response(payload: dict, status_code: int = 200) -> MagicMock:
+    """Оборачивает payload в {"data": ...} — так реально отвечает /community/data."""
     resp = MagicMock()
     resp.status_code = status_code
-    resp.json.return_value = payload
+    resp.json.return_value = {"data": payload}
     resp.raise_for_status = MagicMock()
     return resp
 
@@ -49,6 +50,19 @@ async def test_fetch_farm_rank_raises_when_farm_absent_from_details():
 
 
 @pytest.mark.asyncio
+async def test_fetch_farm_rank_raises_when_no_tickets_this_chapter():
+    payload = {"farmRankingDetails": None}
+    client = AsyncMock()
+    client.get.return_value = _fake_response(payload)
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+
+    with patch("shared.tickets_leaderboard.httpx.AsyncClient", return_value=client):
+        with pytest.raises(tickets_leaderboard.FarmRankNotFound):
+            await tickets_leaderboard.fetch_farm_rank(999)
+
+
+@pytest.mark.asyncio
 async def test_fetch_farm_rank_raises_on_404():
     client = AsyncMock()
     client.get.return_value = _fake_response({}, status_code=404)
@@ -58,6 +72,26 @@ async def test_fetch_farm_rank_raises_on_404():
     with patch("shared.tickets_leaderboard.httpx.AsyncClient", return_value=client):
         with pytest.raises(tickets_leaderboard.FarmRankNotFound):
             await tickets_leaderboard.fetch_farm_rank(404)
+
+
+@pytest.mark.asyncio
+async def test_fetch_farm_rank_uses_top_ten_when_details_omitted():
+    payload = {
+        "farmRankingDetails": None,
+        "topTen": [
+            {"farmId": 111, "id": "Other", "count": 100},
+            {"farmId": 62559, "id": "Dionis", "count": 90},
+        ],
+    }
+    client = AsyncMock()
+    client.get.return_value = _fake_response(payload)
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+
+    with patch("shared.tickets_leaderboard.httpx.AsyncClient", return_value=client):
+        result = await tickets_leaderboard.fetch_farm_rank(62559)
+
+    assert result == {"rank": 2, "tickets": 90, "game_username": "Dionis"}
 
 
 @pytest.mark.asyncio
@@ -84,8 +118,12 @@ async def test_fetch_top500_assigns_rank_by_position():
     ]
 
     called_url = client.get.call_args.args[0]
-    assert called_url.endswith(f"/leaderboard/tickets/{tickets_leaderboard.TOP500_QUERY_FARM_ID}")
-    assert client.get.call_args.kwargs["params"] == {"limit": tickets_leaderboard.TOP500_LIMIT}
+    assert called_url.endswith("/community/data")
+    assert client.get.call_args.kwargs["params"] == {
+        "type": "ticketLeaderboard",
+        "farmId": tickets_leaderboard.TOP500_QUERY_FARM_ID,
+        "limit": tickets_leaderboard.TOP500_LIMIT,
+    }
 
 
 @pytest.mark.asyncio

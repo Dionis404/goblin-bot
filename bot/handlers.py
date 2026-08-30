@@ -1,5 +1,6 @@
 """Хэндлеры aiogram: приём ID фермы, подтверждение, запись в БД."""
 import logging
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -205,6 +206,52 @@ async def backfill_post_images(message: Message):
         f"Не удалось: <b>{result['failed']}</b>\n"
         f"Всего к обработке: <b>{result['total']}</b>"
     )
+
+
+@router.message(Command("tickets_check"))
+async def tickets_check(message: Message):
+    """Ручной прогон почасового сбора лидерборда тикетов + сводка по tracked-фермерам."""
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    status_msg = await message.answer(
+        "🔄 Проверяю лидерборд тикетов (запрашиваю API по каждой отслеживаемой ферме)…"
+    )
+    try:
+        from jobs.tickets_leaderboard import run_tickets_leaderboard
+        result = await run_tickets_leaderboard()
+    except Exception:
+        log.exception("Ошибка ручной проверки лидерборда тикетов")
+        await status_msg.edit_text("⚠️ Не удалось выполнить проверку, смотри логи.")
+        return
+
+    pool = await db.get_pool()
+    now = datetime.now(timezone.utc)
+
+    farmers = await tickets_leaderboard.get_tracked_farmers(pool)
+    lines = [
+        f"✅ Прогон завершён: сохранено <b>{result['saved']}</b>, "
+        f"пропущено <b>{result['skipped']}</b> (всего <b>{result['total']}</b> tracked).\n",
+        f"🎟 <b>Свежие снэпшоты ({len(farmers)} tracked-ферм):</b>",
+    ]
+    for farmer in farmers:
+        snapshot = await tickets_leaderboard.get_latest_snapshot_before(
+            pool, farmer["farm_id"], now
+        )
+        name = f"@{farmer['telegram_username']}" if farmer["telegram_username"] else f"#{farmer['farm_id']}"
+        if snapshot is None:
+            lines.append(f"{name} (#{farmer['farm_id']}) — нет снэпшота (вне топ-{tickets_leaderboard.RANK_CUTOFF} или не найдена в API)")
+        else:
+            age_min = int((now - snapshot["taken_at"]).total_seconds() // 60)
+            lines.append(
+                f"{name} (#{farmer['farm_id']}) — {snapshot['rank']} место, "
+                f"{snapshot['tickets']} тикетов (снэпшот {age_min} мин назад)"
+            )
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3900] + "\n…(обрезано)"
+    await status_msg.edit_text(text)
 
 
 @router.message(Command("tracking_lb"))

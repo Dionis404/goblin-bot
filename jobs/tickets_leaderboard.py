@@ -2,9 +2,9 @@
 Почасовой сбор места отслеживаемых ферм в лидерборде тикетов SFL.
 
 Для каждой фермы с farmers.tickets_tracked = true делает один запрос к
-/leaderboard/tickets/{farm_id} и, если ранг <= RANK_CUTOFF, пишет снэпшот
-в ticket_leaderboard_snapshots. Фермы вне ранга (или отсутствующие в ответе
-API) просто пропускаются — снэпшот не создаётся.
+/community/data?type=ticketLeaderboard и, если ранг <= RANK_CUTOFF, пишет
+снэпшот в ticket_leaderboard_snapshots. Фермы вне ранга (или отсутствующие
+в ответе API) просто пропускаются — снэпшот не создаётся.
 
 Запуск:
   python -m jobs.tickets_leaderboard

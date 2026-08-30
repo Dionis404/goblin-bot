@@ -1,7 +1,7 @@
 """
 Почасовой снэпшот глобального топ-500 лидерборда тикетов SFL (top500_snapshots).
 
-Один тяжёлый запрос /leaderboard/tickets/{любой_farm_id}?limit=500 в час —
+Один тяжёлый запрос /community/data?type=ticketLeaderboard&limit=500 в час —
 не зависит от tracked-фермеров, нужен для отдачи полного борда через сайт/API.
 
 Запуск:

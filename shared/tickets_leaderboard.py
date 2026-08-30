@@ -1,16 +1,23 @@
 """Лидерборд тикетов SFL: два независимых источника снэпшотов.
 
+Источник — GET /community/data?type=ticketLeaderboard (требует x-api-key,
+VIP+level50 на стороне игры). Старый /leaderboard/tickets/{farm_id} — legacy,
+может быть отключён в любой момент.
+
 1. Топ-500 целиком (top500_snapshots) — почасовой снимок всего глобального
-   борда через /leaderboard/tickets/{любой_farm_id}?limit=500. FarmID в пути
-   не влияет на список (борд общий), но обязателен по формату API — берём
-   TOP500_QUERY_FARM_ID. Не зависит от tracked-фермеров, нужен для сайта/API.
+   борда через ?type=ticketLeaderboard&farmId={любой_farm_id}&limit=500.
+   FarmID в query не влияет на список (борд общий), но обязателен по формату
+   API — берём TOP500_QUERY_FARM_ID. Не зависит от tracked-фермеров, нужен
+   для сайта/API.
 
 2. Точное место tracked-фермера (ticket_leaderboard_snapshots) — для фермеров
    с farmers.tickets_tracked = true. Запрос без limit возвращает
    farmRankingDetails — узкое окно вокруг точного ранга запрошенной фермы
-   (работает на любом месте, хоть 29000+), поэтому на каждую отслеживаемую
-   ферму достаточно одного лёгкого запроса в час. Пишется только если
-   rank <= RANK_CUTOFF — питает еженедельный отчёт в группе.
+   (работает на любом месте, хоть 29000+); omitted, если ферма уже в топ-10
+   (тогда берём её ранг из topTen), null — если у фермы нет тикетов в этой
+   главе. На каждую отслеживаемую ферму достаточно одного лёгкого запроса
+   в час. Пишется только если rank <= RANK_CUTOFF — питает еженедельный
+   отчёт в группе.
 """
 import logging
 from datetime import datetime, timezone
@@ -33,21 +40,44 @@ class FarmRankNotFound(Exception):
     """Ферма не встретилась в ответе API (нет тикетов / не существует)."""
 
 
+def _api_headers() -> dict:
+    return {"x-api-key": config.SFL_API_KEY} if config.SFL_API_KEY else {}
+
+
 async def fetch_farm_rank(farm_id: int) -> dict:
     """
     Возвращает {"rank", "tickets", "game_username"} для конкретной фермы.
-    Бросает FarmRankNotFound, если фермы нет в farmRankingDetails ответа.
+
+    Бросает FarmRankNotFound, если у фермы нет тикетов в этой главе
+    (farmRankingDetails == null) или её не удалось найти в ответе.
+    Если ферма уже в топ-10, farmRankingDetails в ответе отсутствует —
+    тогда берём её место из topTen.
     """
-    url = f"{config.SFL_API_BASE}/leaderboard/tickets/{farm_id}"
+    url = f"{config.SFL_API_BASE}/community/data"
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.get(url)
+        resp = await client.get(
+            url,
+            params={"type": "ticketLeaderboard", "farmId": farm_id},
+            headers=_api_headers(),
+        )
         if resp.status_code == 404:
             raise FarmRankNotFound(f"Ферма {farm_id} не найдена в лидерборде тикетов")
         resp.raise_for_status()
-        data = resp.json()
+        data = resp.json()["data"]
 
-    for entry in data.get("farmRankingDetails") or []:
+    details = data.get("farmRankingDetails")
+    if details is None:
+        for i, entry in enumerate(data.get("topTen") or [], start=1):
+            if entry.get("farmId") == farm_id:
+                return {
+                    "rank": i,
+                    "tickets": entry["count"],
+                    "game_username": entry.get("id"),
+                }
+        raise FarmRankNotFound(f"Ферма {farm_id} не крафтила тикетов в этой главе")
+
+    for entry in details:
         if entry.get("farmId") == farm_id:
             return {
                 "rank": entry["rank"],
@@ -108,12 +138,20 @@ async def set_tracking(pool: asyncpg.Pool, telegram_id: int, enabled: bool) -> N
 
 async def fetch_top500() -> list[dict]:
     """Возвращает топ-500 [{"rank", "farm_id", "game_username", "tickets"}, ...]."""
-    url = f"{config.SFL_API_BASE}/leaderboard/tickets/{TOP500_QUERY_FARM_ID}"
+    url = f"{config.SFL_API_BASE}/community/data"
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.get(url, params={"limit": TOP500_LIMIT})
+        resp = await client.get(
+            url,
+            params={
+                "type": "ticketLeaderboard",
+                "farmId": TOP500_QUERY_FARM_ID,
+                "limit": TOP500_LIMIT,
+            },
+            headers=_api_headers(),
+        )
         resp.raise_for_status()
-        data = resp.json()
+        data = resp.json()["data"]
 
     entries = data.get("topTen") or []
     return [
