@@ -13,7 +13,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommand
 from bot.channel import router as channel_router
 from bot.handlers import router
 from bot.subscriber_notify import router as subscriber_notify_router
-from shared import config, db, telegram_stats
+from shared import bot_settings, config, db, telegram_stats
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("goblin-bot")
@@ -25,6 +25,8 @@ TOP500_SNAPSHOT_INTERVAL_SEC = 3600  # почасовой снэпшот все�
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Monday)
 WEEKLY_NOTIFY_HOUR = 3
+WEEKLY_NOTIFY_CHECK_INTERVAL_SEC = 300  # как часто перепроверять, не пропущено ли окно
+WEEKLY_NOTIFY_LAST_SENT_KEY = "tickets_weekly_notify_last_sent"
 
 
 async def refresh_telegram_stats_loop(bot: Bot) -> None:
@@ -66,29 +68,43 @@ async def top500_snapshot_loop() -> None:
         await asyncio.sleep(TOP500_SNAPSHOT_INTERVAL_SEC)
 
 
-def _seconds_until_next_weekly_notify(now: datetime) -> float:
-    """Секунды до ближайших 03:00 МСК понедельника (ночь с ВС на ПН)."""
-    target = now.replace(hour=WEEKLY_NOTIFY_HOUR, minute=0, second=0, microsecond=0)
-    days_ahead = (WEEKLY_NOTIFY_WEEKDAY - now.weekday()) % 7
-    target += timedelta(days=days_ahead)
-    if target <= now:
-        target += timedelta(days=7)
-    return (target - now).total_seconds()
+def _current_notify_window(now: datetime) -> str | None:
+    """
+    ID окна отправки (дата понедельника-триггера, YYYY-MM-DD), если сейчас
+    >= 03:00 МСК текущей недели с ВС на ПН, иначе None (окно ещё не наступило).
+    """
+    days_since_monday = now.weekday() - WEEKLY_NOTIFY_WEEKDAY
+    monday = (now - timedelta(days=days_since_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    trigger = monday.replace(hour=WEEKLY_NOTIFY_HOUR)
+    if now < trigger:
+        return None
+    return monday.date().isoformat()
 
 
 async def tickets_weekly_notify_loop(bot: Bot) -> None:
-    """Раз в неделю (ночь с ВС на ПН, 03:00 МСК) шлёт отчёт по местам в группу."""
+    """
+    Раз в неделю (ночь с ВС на ПН, 03:00 МСК) шлёт отчёт по местам в группу.
+
+    Устойчиво к рестартам процесса: вместо одного долгого sleep до целевого
+    момента (который пропускает окно, если рестарт пришёлся рядом с 03:00),
+    периодически проверяет, наступило ли уже окно этой недели и не отправлен
+    ли отчёт за него — прогресс хранится в bot_settings, а не в памяти.
+    """
     from jobs.tickets_weekly_notify import run_tickets_weekly_notify
 
     while True:
-        wait = _seconds_until_next_weekly_notify(datetime.now(MOSCOW_TZ))
-        await asyncio.sleep(wait)
-        try:
-            await run_tickets_weekly_notify(bot)
-        except Exception:
-            log.exception("Ошибка еженедельного уведомления о лидерборде тикетов")
-        # небольшая пауза, чтобы не сработать повторно в ту же минуту при дрифте
-        await asyncio.sleep(60)
+        window = _current_notify_window(datetime.now(MOSCOW_TZ))
+        if window is not None:
+            last_sent = await bot_settings.get_str(WEEKLY_NOTIFY_LAST_SENT_KEY)
+            if last_sent != window:
+                try:
+                    await run_tickets_weekly_notify(bot)
+                    await bot_settings.set_str(WEEKLY_NOTIFY_LAST_SENT_KEY, window)
+                except Exception:
+                    log.exception("Ошибка еженедельного уведомления о лидерборде тикетов")
+        await asyncio.sleep(WEEKLY_NOTIFY_CHECK_INTERVAL_SEC)
 
 
 async def main():
