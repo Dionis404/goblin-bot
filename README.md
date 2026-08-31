@@ -14,8 +14,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - Защита от rate limit SFL API (throttle + anti-spam + retry на 429)
 
 **Фоновые задачи (`jobs/`, крутятся внутри `bot/main.py`)**
-- Почасовой снэпшот полного топ-500 лидерборда тикетов → `top500_snapshot.py` (данные для сайта, история хранится вся)
-- Почасовой снэпшот места отслеживаемых ферм → `tickets_leaderboard.py`
+- Почасовой снэпшот топ-500 + места отслеживаемых ферм → `tickets_leaderboard.py` (топ-500 переиспользуется для tracked-ферм, чтобы экономить запросы к API; фермы с рангом ниже 2000 навсегда исключаются из отдельного опроса — `farmers.tickets_excluded`)
 - Еженедельная рассылка отчёта по местам → `tickets_weekly_notify.py`
 - Сбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base, через The Graph) → `lp_leaderboard.py`
 - Батч-прогрев кэша ферм (`daily_refresh.py`) — запускается вручную/по крону, не в основном цикле бота
@@ -50,7 +49,7 @@ goblin-bot/
 
 ## Локальный запуск
 
-1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `010…`).
+1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `011…`).
 2. `cp .env.example .env` → заполнить токены, ключи, пароль БД (см. комментарии в файле).
 3. `pip install -r requirements.txt`
 4. `python -m bot.main` (или `docker compose up --build`)

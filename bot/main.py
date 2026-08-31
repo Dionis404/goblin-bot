@@ -19,8 +19,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("goblin-bot")
 
 TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные не горят, на сайте свой кэш на 10 мин
-TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот мест отслеживаемых ферм
-TOP500_SNAPSHOT_INTERVAL_SEC = 3600  # почасовой снэпшот всего топ-500 (для сайта/API)
+TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот топ-500 + мест отслеживаемых ферм
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Monday)
@@ -45,7 +44,7 @@ async def refresh_telegram_stats_loop(bot: Bot) -> None:
 
 
 async def tickets_leaderboard_loop() -> None:
-    """Почасовой сбор точного места отслеживаемых ферм в лидерборде тикетов."""
+    """Почасовой снэпшот топ-500 + точного места отслеживаемых ферм в лидерборде тикетов."""
     from jobs.tickets_leaderboard import run_tickets_leaderboard
 
     while True:
@@ -54,18 +53,6 @@ async def tickets_leaderboard_loop() -> None:
         except Exception:
             log.exception("Ошибка почасового снэпшота лидерборда тикетов")
         await asyncio.sleep(TICKETS_LEADERBOARD_INTERVAL_SEC)
-
-
-async def top500_snapshot_loop() -> None:
-    """Почасовой снэпшот всего глобального топ-500 (не зависит от tracked-ферм)."""
-    from jobs.top500_snapshot import run_top500_snapshot
-
-    while True:
-        try:
-            await run_top500_snapshot()
-        except Exception:
-            log.exception("Ошибка почасового снэпшота топ-500")
-        await asyncio.sleep(TOP500_SNAPSHOT_INTERVAL_SEC)
 
 
 def _current_notify_window(now: datetime) -> str | None:
@@ -147,7 +134,6 @@ async def main():
 
     stats_task = asyncio.create_task(refresh_telegram_stats_loop(bot))
     tickets_task = asyncio.create_task(tickets_leaderboard_loop())
-    top500_task = asyncio.create_task(top500_snapshot_loop())
     weekly_notify_task = asyncio.create_task(tickets_weekly_notify_loop(bot))
 
     log.info("Бот запущен, начинаю polling…")
@@ -158,7 +144,6 @@ async def main():
     finally:
         stats_task.cancel()
         tickets_task.cancel()
-        top500_task.cancel()
         weekly_notify_task.cancel()
         await db.close_pool()
 

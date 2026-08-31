@@ -1,23 +1,26 @@
-"""Лидерборд тикетов SFL: два независимых источника снэпшотов.
+"""Лидерборд тикетов SFL: топ-500 + точное место tracked-фермеров, экономно.
 
 Источник — GET /community/data?type=ticketLeaderboard (требует x-api-key,
 VIP+level50 на стороне игры). Старый /leaderboard/tickets/{farm_id} — legacy,
-может быть отключён в любой момент.
+может быть отключён в любой момент. У community API строгий rate limit,
+поэтому jobs/tickets_leaderboard.py минимизирует число запросов:
 
-1. Топ-500 целиком (top500_snapshots) — почасовой снимок всего глобального
-   борда через ?type=ticketLeaderboard&farmId={любой_farm_id}&limit=500.
-   FarmID в query не влияет на список (борд общий), но обязателен по формату
-   API — берём TOP500_QUERY_FARM_ID. Не зависит от tracked-фермеров, нужен
-   для сайта/API.
+1. Топ-500 целиком (top500_snapshots) — один запрос в час через
+   ?type=ticketLeaderboard&farmId={любой_farm_id}&limit=500. FarmID в query
+   не влияет на список (борд общий), но обязателен по формату API — берём
+   TOP500_QUERY_FARM_ID. Не зависит от tracked-фермеров, нужен для сайта/API.
 
 2. Точное место tracked-фермера (ticket_leaderboard_snapshots) — для фермеров
-   с farmers.tickets_tracked = true. Запрос без limit возвращает
-   farmRankingDetails — узкое окно вокруг точного ранга запрошенной фермы
-   (работает на любом месте, хоть 29000+); omitted, если ферма уже в топ-10
-   (тогда берём её ранг из topTen), null — если у фермы нет тикетов в этой
-   главе. На каждую отслеживаемую ферму достаточно одного лёгкого запроса
-   в час. Пишется только если rank <= RANK_CUTOFF — питает еженедельный
-   отчёт в группе.
+   с farmers.tickets_tracked = true И tickets_excluded = false. Если ферма
+   уже нашлась в топ-500 из пункта 1, её ранг берётся оттуда бесплатно, без
+   отдельного запроса. Иначе — отдельный запрос, возвращающий
+   farmRankingDetails (узкое окно вокруг точного ранга, работает на любом
+   месте, хоть 29000+); omitted, если ферма уже в топ-10 (тогда берём ранг
+   из topTen), null — если у фермы нет тикетов в этой главе.
+   Снэпшот пишется, только если rank <= RANK_CUTOFF — питает еженедельный
+   отчёт в группе. Если ранг (из любого источника) >= TICKETS_EXCLUDE_RANK,
+   ферма помечается tickets_excluded и больше не запрашивается отдельно
+   (но продолжает подхватываться бесплатно, если сама всплывёт в топ-500).
 """
 import asyncio
 import logging
@@ -32,6 +35,11 @@ log = logging.getLogger(__name__)
 
 RANK_CUTOFF = 1200
 TIMEOUT = 10.0
+
+# Если последний известный ранг фермы >= этого порога, она больше не
+# запрашивается отдельным HTTP-запросом каждый час (farmers.tickets_excluded).
+# Всё ещё подхватывается бесплатно, если сама всплывёт в топ-500.
+TICKETS_EXCLUDE_RANK = 2000
 
 TOP500_QUERY_FARM_ID = 1  # произвольный валидный farm_id, только чтобы собрать topTen с limit=500
 TOP500_LIMIT = 500
@@ -124,10 +132,29 @@ async def get_tracked_farm_ids(pool: asyncpg.Pool) -> list[int]:
     return [r["farm_id"] for r in rows]
 
 
+async def get_trackable_farm_ids(pool: asyncpg.Pool) -> list[int]:
+    """
+    Tracked-фермеры, которых ещё стоит опрашивать отдельным запросом —
+    без тех, кого уже пометили tickets_excluded (последний известный ранг
+    был >= TICKETS_EXCLUDE_RANK, дальше проверять бессмысленно).
+    """
+    rows = await pool.fetch(
+        "SELECT farm_id FROM farmers WHERE tickets_tracked = true AND tickets_excluded = false"
+    )
+    return [r["farm_id"] for r in rows]
+
+
+async def mark_excluded(pool: asyncpg.Pool, farm_id: int) -> None:
+    """Навсегда исключить ферму из почасового опроса (см. TICKETS_EXCLUDE_RANK)."""
+    await pool.execute(
+        "UPDATE farmers SET tickets_excluded = true WHERE farm_id = $1", farm_id
+    )
+
+
 async def get_tracked_farmers(pool: asyncpg.Pool) -> list[asyncpg.Record]:
-    """Отслеживаемые фермеры (farm_id + telegram_username) для еженедельного уведомления."""
+    """Отслеживаемые фермеры (farm_id + telegram_username + tickets_excluded)."""
     return await pool.fetch(
-        "SELECT farm_id, telegram_username FROM farmers WHERE tickets_tracked = true"
+        "SELECT farm_id, telegram_username, tickets_excluded FROM farmers WHERE tickets_tracked = true"
     )
 
 

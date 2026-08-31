@@ -215,7 +215,7 @@ async def tickets_check(message: Message):
         return
 
     status_msg = await message.answer(
-        "🔄 Проверяю лидерборд тикетов (запрашиваю API по каждой отслеживаемой ферме)…"
+        "🔄 Проверяю лидерборд тикетов (топ-500 + отслеживаемые фермы)…"
     )
     try:
         from jobs.tickets_leaderboard import run_tickets_leaderboard
@@ -231,7 +231,10 @@ async def tickets_check(message: Message):
     farmers = await tickets_leaderboard.get_tracked_farmers(pool)
     lines = [
         f"✅ Прогон завершён: сохранено <b>{result['saved']}</b>, "
-        f"пропущено <b>{result['skipped']}</b> (всего <b>{result['total']}</b> tracked).\n",
+        f"пропущено <b>{result['skipped']}</b>, "
+        f"из топ-500 без запроса <b>{result['from_top500']}</b>, "
+        f"вновь исключено <b>{result['excluded']}</b> "
+        f"(всего <b>{result['total']}</b> tracked).\n",
         f"🎟 <b>Свежие снэпшоты ({len(farmers)} tracked-ферм):</b>",
     ]
     for farmer in farmers:
@@ -239,13 +242,17 @@ async def tickets_check(message: Message):
             pool, farmer["farm_id"], now
         )
         name = f"@{farmer['telegram_username']}" if farmer["telegram_username"] else f"#{farmer['farm_id']}"
+        excluded_note = " ⛔ исключена (ранг слишком низкий)" if farmer["tickets_excluded"] else ""
         if snapshot is None:
-            lines.append(f"{name} (#{farmer['farm_id']}) — нет снэпшота (вне топ-{tickets_leaderboard.RANK_CUTOFF} или не найдена в API)")
+            lines.append(
+                f"{name} (#{farmer['farm_id']}) — нет снэпшота "
+                f"(вне топ-{tickets_leaderboard.RANK_CUTOFF} или не найдена в API){excluded_note}"
+            )
         else:
             age_min = int((now - snapshot["taken_at"]).total_seconds() // 60)
             lines.append(
                 f"{name} (#{farmer['farm_id']}) — {snapshot['rank']} место, "
-                f"{snapshot['tickets']} тикетов (снэпшот {age_min} мин назад)"
+                f"{snapshot['tickets']} тикетов (снэпшот {age_min} мин назад){excluded_note}"
             )
 
     text = "\n".join(lines)
