@@ -196,12 +196,18 @@ async def get_tickets_top500(at: datetime | None = None):
 # --- Аукционы (auctions / auction_results) — read-only, пишет auctioneer-bot ---
 
 @app.get("/api/auctions")
-async def get_auctions(upcoming: bool = False):
-    if not upcoming:
-        raise HTTPException(status_code=400, detail="Поддерживается только upcoming=true")
+async def get_auctions(upcoming: bool = False, history: bool = False, limit: int = 20):
+    if upcoming and history:
+        raise HTTPException(status_code=400, detail="upcoming и history взаимоисключающие")
+    if not upcoming and not history:
+        raise HTTPException(status_code=400, detail="Укажите upcoming=true или history=true")
 
     pool = await db.get_pool()
-    rows = await auctions.list_upcoming(pool)
+    rows = (
+        await auctions.list_upcoming(pool)
+        if upcoming
+        else await auctions.list_past(pool, limit=limit)
+    )
     return [
         {
             "auction_id": r["auction_id"],

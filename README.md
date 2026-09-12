@@ -24,7 +24,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - `GET /farm/{farm_id}`, `GET /farms?ids=`, `POST /farm/{farm_id}/refresh` — кэш данных фермы (`farm_cache`) с фоновым обновлением по TTL
 - `GET /lp/leaderboard` — топ-500 LP-провайдеров пула FLOWER/USDC
 - `GET /api/tickets/top500` — снэпшот топ-500 лидерборда тикетов, с историческим срезом через `?at=`; подробности — [docs/tickets-leaderboard-api.md](docs/tickets-leaderboard-api.md)
-- `GET /api/auctions?upcoming=true`, `GET /api/auctions/{auction_id}/results` — read-only витрина аукционов (пишет отдельный сервис `auctioneer-bot`)
+- `GET /api/auctions?upcoming=true` / `?history=true&limit=` — список предстоящих/прошедших аукционов, `GET /api/auctions/{auction_id}/results` — результаты конкретного аукциона (read-only витрина, пишет отдельный сервис `auctioneer-bot`)
 
 ## Стек
 

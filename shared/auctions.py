@@ -18,6 +18,21 @@ async def list_upcoming(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     )
 
 
+async def list_past(pool: asyncpg.Pool, limit: int = 20) -> list[asyncpg.Record]:
+    """Прошедшие аукционы (start_at <= now()), от самого недавнего."""
+    return await pool.fetch(
+        """
+        SELECT auction_id, item_name, item_type, supply,
+               sfl_price, ingredients, start_at, end_at
+        FROM auctions
+        WHERE start_at <= now()
+        ORDER BY start_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+
+
 async def get_results(pool: asyncpg.Pool, auction_id: str) -> asyncpg.Record | None:
     return await pool.fetchrow(
         """

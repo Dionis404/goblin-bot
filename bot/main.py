@@ -70,6 +70,13 @@ def _current_notify_window(now: datetime) -> str | None:
     return monday.date().isoformat()
 
 
+async def game_update_notify_loop(bot: Bot) -> None:
+    """Раз в минуту проверяет фид релизов sunflower-land и шлёт уведомление о новой версии."""
+    from jobs.game_update_notify import run_game_update_notify_loop
+
+    await run_game_update_notify_loop(bot)
+
+
 async def tickets_weekly_notify_loop(bot: Bot) -> None:
     """
     Раз в неделю (ночь с ВС на ПН, 03:00 МСК) шлёт отчёт по местам в группу.
@@ -135,6 +142,7 @@ async def main():
     stats_task = asyncio.create_task(refresh_telegram_stats_loop(bot))
     tickets_task = asyncio.create_task(tickets_leaderboard_loop())
     weekly_notify_task = asyncio.create_task(tickets_weekly_notify_loop(bot))
+    game_update_task = asyncio.create_task(game_update_notify_loop(bot))
 
     log.info("Бот запущен, начинаю polling…")
     try:
@@ -145,6 +153,7 @@ async def main():
         stats_task.cancel()
         tickets_task.cancel()
         weekly_notify_task.cancel()
+        game_update_task.cancel()
         await db.close_pool()
 
 

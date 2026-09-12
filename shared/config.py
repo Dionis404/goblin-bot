@@ -63,3 +63,28 @@ TICKETS_NOTIFY_CHAT_ID = os.environ.get("TICKETS_NOTIFY_CHAT_ID", "").strip() or
 # Пауза между запросами к разным фермам в почасовом сборе — у community API
 # (/community/data?type=ticketLeaderboard) жёсткий лимит, 0.5с даёт сплошной 429.
 TICKETS_DELAY_BETWEEN_FARMS_SEC = float(os.environ.get("TICKETS_DELAY_BETWEEN_FARMS_SEC", "6"))
+
+# --- Уведомления о новых версиях игры (jobs/game_update_notify.py) ---
+# Чат, куда шлётся сообщение о свежем релизе sunflower-land. Отдельная
+# переменная (не переиспользуем TICKETS_NOTIFY_CHAT_ID впрямую), но по
+# умолчанию — тот же чат, что и для лидерборда тикетов.
+GAME_UPDATE_NOTIFY_CHAT_ID = (
+    os.environ.get("GAME_UPDATE_NOTIFY_CHAT_ID", "").strip() or TICKETS_NOTIFY_CHAT_ID
+)
+# Atom-фид релизов игры и частота опроса.
+GAME_UPDATE_FEED_URL = os.environ.get(
+    "GAME_UPDATE_FEED_URL", "https://github.com/sunflower-land/sunflower-land/releases.atom"
+)
+GAME_UPDATE_POLL_INTERVAL_SEC = int(os.environ.get("GAME_UPDATE_POLL_INTERVAL_SEC", "60"))
+
+# --- AI-перевод changelog'а на русский (OpenAI-совместимый эндпоинт) ---
+# По умолчанию — OpenRouter; можно указать любой OpenAI-совместимый base URL.
+# Ключ по умолчанию берём из уже существующего ROUTERAI_API_KEY (используется
+# для других AI-задач в проекте) — отдельно задавать не обязательно.
+AI_TRANSLATE_API_BASE = os.environ.get("AI_TRANSLATE_API_BASE", "https://openrouter.ai/api/v1")
+AI_TRANSLATE_API_KEY = (
+    os.environ.get("AI_TRANSLATE_API_KEY", "").strip()
+    or os.environ.get("ROUTERAI_API_KEY", "").strip()
+    or None
+)
+AI_TRANSLATE_MODEL = os.environ.get("AI_TRANSLATE_MODEL", "google/gemini-2.5-flash")
