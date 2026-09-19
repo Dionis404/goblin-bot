@@ -38,6 +38,12 @@ async def run_tickets_leaderboard() -> dict:
 
     farm_ids = await tickets_leaderboard.get_trackable_farm_ids(pool)
 
+    # Пауза после тяжёлого limit=500 запроса — иначе первый же отдельный
+    # запрос по конкретной ферме почти гарантированно ловит 429 (community
+    # API ещё не сбросил лимит).
+    if any(farm_id not in top500_by_farm for farm_id in farm_ids):
+        await asyncio.sleep(DELAY_BETWEEN_FARMS_SEC)
+
     saved = 0
     skipped = 0
     from_top500 = 0
