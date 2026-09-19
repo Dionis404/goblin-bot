@@ -30,7 +30,7 @@ services:
       GAME_UPDATE_NOTIFY_CHAT_ID: ${GAME_UPDATE_NOTIFY_CHAT_ID:-}
       GAME_UPDATE_FEED_URL: ${GAME_UPDATE_FEED_URL:-https://github.com/sunflower-land/sunflower-land/releases.atom}
       GAME_UPDATE_POLL_INTERVAL_SEC: ${GAME_UPDATE_POLL_INTERVAL_SEC:-60}
-      AI_TRANSLATE_API_BASE: ${AI_TRANSLATE_API_BASE:-https://openrouter.ai/api/v1}
+      AI_TRANSLATE_API_BASE: ${AI_TRANSLATE_API_BASE:-https://routerai.ru/api/v1}
       AI_TRANSLATE_API_KEY: ${AI_TRANSLATE_API_KEY:-}
       AI_TRANSLATE_MODEL: ${AI_TRANSLATE_MODEL:-google/gemini-2.5-flash}
       ROUTERAI_API_KEY: ${ROUTERAI_API_KEY:-}

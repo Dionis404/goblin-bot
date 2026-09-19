@@ -78,10 +78,11 @@ GAME_UPDATE_FEED_URL = os.environ.get(
 GAME_UPDATE_POLL_INTERVAL_SEC = int(os.environ.get("GAME_UPDATE_POLL_INTERVAL_SEC", "60"))
 
 # --- AI-перевод changelog'а на русский (OpenAI-совместимый эндпоинт) ---
-# По умолчанию — OpenRouter; можно указать любой OpenAI-совместимый base URL.
-# Ключ по умолчанию берём из уже существующего ROUTERAI_API_KEY (используется
-# для других AI-задач в проекте) — отдельно задавать не обязательно.
-AI_TRANSLATE_API_BASE = os.environ.get("AI_TRANSLATE_API_BASE", "https://openrouter.ai/api/v1")
+# По умолчанию — routerai.ru (тот же провайдер, что и ROUTERAI_API_KEY для
+# остальных AI-задач в проекте); можно указать любой OpenAI-совместимый base URL.
+# Ключ по умолчанию берём из уже существующего ROUTERAI_API_KEY — отдельно
+# задавать не обязательно.
+AI_TRANSLATE_API_BASE = os.environ.get("AI_TRANSLATE_API_BASE", "https://routerai.ru/api/v1")
 AI_TRANSLATE_API_KEY = (
     os.environ.get("AI_TRANSLATE_API_KEY", "").strip()
     or os.environ.get("ROUTERAI_API_KEY", "").strip()
