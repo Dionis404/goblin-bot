@@ -196,17 +196,21 @@ async def get_tickets_top500(at: datetime | None = None):
 # --- Аукционы (auctions / auction_results) — read-only, пишет auctioneer-bot ---
 
 @app.get("/api/auctions")
-async def get_auctions(upcoming: bool = False, history: bool = False, limit: int = 20):
+async def get_auctions(
+    upcoming: bool = False, history: bool = False, limit: int = 20, item_name: str | None = None
+):
     if upcoming and history:
         raise HTTPException(status_code=400, detail="upcoming и history взаимоисключающие")
     if not upcoming and not history:
         raise HTTPException(status_code=400, detail="Укажите upcoming=true или history=true")
+    if item_name is not None and upcoming:
+        raise HTTPException(status_code=400, detail="item_name поддерживается только с history=true")
 
     pool = await db.get_pool()
     rows = (
         await auctions.list_upcoming(pool)
         if upcoming
-        else await auctions.list_past(pool, limit=limit)
+        else await auctions.list_past(pool, limit=limit, item_name=item_name)
     )
     return [
         {
@@ -231,8 +235,11 @@ async def get_auction_results(auction_id: str):
         raise HTTPException(status_code=404, detail="Результаты аукциона ещё не готовы")
 
     return {
+        "item_name": row["item_name"],
+        "item_type": row["item_type"],
         "my_status": row["my_status"],
         "participant_count": row["participant_count"],
         "supply": row["supply"],
         "leaderboard": row["leaderboard"],
+        "fetched_at": row["fetched_at"],
     }

@@ -18,8 +18,25 @@ async def list_upcoming(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     )
 
 
-async def list_past(pool: asyncpg.Pool, limit: int = 20) -> list[asyncpg.Record]:
-    """Прошедшие аукционы (start_at <= now()), от самого недавнего."""
+async def list_past(
+    pool: asyncpg.Pool, limit: int = 20, item_name: str | None = None
+) -> list[asyncpg.Record]:
+    """
+    Прошедшие аукционы (start_at <= now()), от самого недавнего.
+    С item_name — история конкретного предмета (регистронезависимо, точное совпадение).
+    """
+    if item_name is not None:
+        return await pool.fetch(
+            """
+            SELECT auction_id, item_name, item_type, supply,
+                   sfl_price, ingredients, start_at, end_at
+            FROM auctions
+            WHERE start_at <= now() AND item_name ILIKE $2
+            ORDER BY start_at DESC
+            LIMIT $1
+            """,
+            limit, item_name,
+        )
     return await pool.fetch(
         """
         SELECT auction_id, item_name, item_type, supply,
@@ -34,11 +51,14 @@ async def list_past(pool: asyncpg.Pool, limit: int = 20) -> list[asyncpg.Record]
 
 
 async def get_results(pool: asyncpg.Pool, auction_id: str) -> asyncpg.Record | None:
+    """Результаты аукциона вместе с item_name/item_type (JOIN на auctions)."""
     return await pool.fetchrow(
         """
-        SELECT my_status, participant_count, supply, leaderboard
-        FROM auction_results
-        WHERE auction_id = $1
+        SELECT a.item_name, a.item_type,
+               r.my_status, r.participant_count, r.supply, r.leaderboard, r.fetched_at
+        FROM auction_results r
+        JOIN auctions a ON a.auction_id = r.auction_id
+        WHERE r.auction_id = $1
         """,
         auction_id,
     )
