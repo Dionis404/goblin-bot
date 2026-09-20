@@ -24,6 +24,15 @@ class FakePool:
         raise NotImplementedError(query)
 
     async def fetch(self, query: str, *args):
+        if "UPDATE farm_cache SET is_refreshing = true" in query and "RETURNING farm_id" in query:
+            ids = args[0]
+            claimed = []
+            for fid in ids:
+                row = self._rows.get(fid)
+                if row is not None and not row["is_refreshing"]:
+                    row["is_refreshing"] = True
+                    claimed.append(fid)
+            return [FakeRecord(farm_id=fid) for fid in claimed]
         if "farm_id = ANY($1" in query:
             ids = args[0]
             return [self._rows[i] for i in ids if i in self._rows]
@@ -46,6 +55,12 @@ class FakePool:
                     is_refreshing=False, tracked=True, first_seen=_now(),
                     last_requested_at=_now(),
                 )
+            return
+        if query.startswith("UPDATE farm_cache SET is_refreshing = false") and "ANY($1" in query:
+            ids = args[0]
+            for fid in ids:
+                if fid in self._rows:
+                    self._rows[fid]["is_refreshing"] = False
             return
         if query.startswith("UPDATE farm_cache SET is_refreshing = false"):
             farm_id = args[0]

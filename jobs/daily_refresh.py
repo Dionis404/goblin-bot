@@ -1,47 +1,37 @@
 """
 Ежедневный батч-прогрев кэша ферм (farm_cache).
 
-Обновляет все отслеживаемые фермы (tracked = true) с небольшой паузой между
-запросами, чтобы не бить внешний SFL API залпом. Крутится раз в сутки прямо
-в основном цикле бота (bot/main.py, daily_refresh_loop). Можно запустить и
-отдельно — вручную или из cron: python -m jobs.daily_refresh
+Обновляет все отслеживаемые фермы (tracked = true) пачками по 100 через
+POST /community/getFarms (deprecated, но кратно дешевле по rate limit, чем
+поштучные GET /community/farms/{id} — см. shared/farm_cache.refresh_farms_batch)
+с паузой между пачками. Крутится раз в сутки прямо в основном цикле бота
+(bot/main.py, daily_refresh_loop). Можно запустить и отдельно — вручную
+или из cron: python -m jobs.daily_refresh
 """
-import asyncio
 import logging
 
 from shared import db, farm_cache
 
 log = logging.getLogger(__name__)
 
-DELAY_BETWEEN_FARMS_SEC = 0.5
+DELAY_BETWEEN_BATCHES_SEC = 5.0  # community API троттлит ~1 запрос/5с на IP
 
 
 async def run_daily_refresh() -> dict:
-    """Обновляет все tracked-фермы. Возвращает {"succeeded": int, "failed": int}."""
+    """Обновляет все tracked-фермы пачками. Возвращает {"succeeded", "skipped", "failed"}."""
     pool = await db.get_pool()
     rows = await pool.fetch("SELECT farm_id FROM farm_cache WHERE tracked = true")
     farm_ids = [r["farm_id"] for r in rows]
 
-    succeeded = 0
-    failed = 0
-
-    for farm_id in farm_ids:
-        before = await farm_cache.get_farm(pool, farm_id)
-        await farm_cache.refresh_farm(farm_id, pool)
-        after = await farm_cache.get_farm(pool, farm_id)
-
-        if after is not None and before is not None and after["updated_at"] > before["updated_at"]:
-            succeeded += 1
-        else:
-            failed += 1
-
-        await asyncio.sleep(DELAY_BETWEEN_FARMS_SEC)
+    result = await farm_cache.refresh_farms_batch(
+        farm_ids, pool, delay_between_chunks_sec=DELAY_BETWEEN_BATCHES_SEC
+    )
 
     log.info(
-        "Батч-прогрев farm_cache завершён: %s успешно, %s с ошибкой (всего %s)",
-        succeeded, failed, len(farm_ids),
+        "Батч-прогрев farm_cache завершён: %s успешно, %s пропущено, %s с ошибкой (всего %s)",
+        result["succeeded"], result["skipped"], result["failed"], len(farm_ids),
     )
-    return {"succeeded": succeeded, "failed": failed}
+    return result
 
 
 async def _main() -> None:
