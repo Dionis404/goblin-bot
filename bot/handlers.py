@@ -184,6 +184,29 @@ async def refresh_lp(message: Message):
     )
 
 
+@router.message(Command("refresh_farms"))
+async def refresh_farms(message: Message):
+    """Ручной прогон ежедневного батч-прогрева farm_cache подписанных (tracked) ферм."""
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    status_msg = await message.answer("🔄 Обновляю данные подписанных ферм (может занять минуту)…")
+    try:
+        from jobs.daily_refresh import run_daily_refresh
+        result = await run_daily_refresh()
+    except Exception:
+        log.exception("Ошибка ручного обновления farm_cache")
+        await status_msg.edit_text("⚠️ Не удалось обновить фермы, смотри логи.")
+        return
+
+    await status_msg.edit_text(
+        f"✅ Обновление завершено.\n"
+        f"Успешно: <b>{result['succeeded']}</b>\n"
+        f"Пропущено: <b>{result['skipped']}</b>\n"
+        f"С ошибкой: <b>{result['failed']}</b>"
+    )
+
+
 @router.message(Command("backfill_post_images"))
 async def backfill_post_images(message: Message):
     if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
