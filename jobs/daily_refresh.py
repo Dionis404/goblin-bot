@@ -2,10 +2,9 @@
 Ежедневный батч-прогрев кэша ферм (farm_cache).
 
 Обновляет все отслеживаемые фермы (tracked = true) с небольшой паузой между
-запросами, чтобы не бить внешний SFL API залпом. Можно запускать:
-- вручную / из cron:            python -m jobs.daily_refresh
-- из n8n HTTP-запроса к обёртке (см. run_daily_refresh)
-- из APScheduler:                await run_daily_refresh()
+запросами, чтобы не бить внешний SFL API залпом. Крутится раз в сутки прямо
+в основном цикле бота (bot/main.py, daily_refresh_loop). Можно запустить и
+отдельно — вручную или из cron: python -m jobs.daily_refresh
 """
 import asyncio
 import logging

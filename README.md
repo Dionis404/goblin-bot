@@ -17,7 +17,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - Почасовой снэпшот топ-500 + места отслеживаемых ферм → `tickets_leaderboard.py` (топ-500 переиспользуется для tracked-ферм, чтобы экономить запросы к API; фермы с рангом ниже 2000 навсегда исключаются из отдельного опроса — `farmers.tickets_excluded`)
 - Еженедельная рассылка отчёта по местам → `tickets_weekly_notify.py`
 - Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base, через The Graph) → `lp_leaderboard.py` (пропускается с предупреждением в логах, если `GRAPH_API_KEY`/`SUBGRAPH_ID` не заданы)
-- Батч-прогрев кэша ферм (`daily_refresh.py`) — запускается вручную/по крону, не в основном цикле бота
+- Ежедневный батч-прогрев кэша всех подписанных (tracked) ферм → `daily_refresh.py` (можно запустить и вручную/по крону — `python -m jobs.daily_refresh`)
 
 **API для сайта (`goblin-api`, доступен только внутри docker-сети `shared-net`)**
 - `GET /community/farmers` — список привязанных фермеров

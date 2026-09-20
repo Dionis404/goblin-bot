@@ -22,6 +22,7 @@ log = logging.getLogger("goblin-bot")
 TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные не горят, на сайте свой кэш на 10 мин
 TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот топ-500 + мест отслеживаемых ферм
 LP_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой пересбор LP-лидерборда пула FLOWER/USDC
+DAILY_REFRESH_INTERVAL_SEC = 86400  # раз в сутки — батч-прогрев farm_cache подписанных ферм
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Monday)
@@ -97,6 +98,18 @@ async def lp_leaderboard_loop() -> None:
         await asyncio.sleep(LP_LEADERBOARD_INTERVAL_SEC)
 
 
+async def daily_refresh_loop() -> None:
+    """Раз в сутки батч-обновляет farm_cache всех подписанных (tracked) ферм."""
+    from jobs.daily_refresh import run_daily_refresh
+
+    while True:
+        try:
+            await run_daily_refresh()
+        except Exception:
+            log.exception("Ошибка ежедневного батч-прогрева farm_cache")
+        await asyncio.sleep(DAILY_REFRESH_INTERVAL_SEC)
+
+
 async def tickets_weekly_notify_loop(bot: Bot) -> None:
     """
     Раз в неделю (ночь с ВС на ПН, 03:00 МСК) шлёт отчёт по местам в группу.
@@ -164,6 +177,7 @@ async def main():
     weekly_notify_task = asyncio.create_task(tickets_weekly_notify_loop(bot))
     game_update_task = asyncio.create_task(game_update_notify_loop(bot))
     lp_leaderboard_task = asyncio.create_task(lp_leaderboard_loop())
+    daily_refresh_task = asyncio.create_task(daily_refresh_loop())
 
     log.info("Бот запущен, начинаю polling…")
     try:
@@ -176,6 +190,7 @@ async def main():
         weekly_notify_task.cancel()
         game_update_task.cancel()
         lp_leaderboard_task.cancel()
+        daily_refresh_task.cancel()
         await db.close_pool()
 
 
