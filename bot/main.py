@@ -1,6 +1,7 @@
 """Точка входа Telegram-бота (aiogram 3, polling)."""
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,7 @@ log = logging.getLogger("goblin-bot")
 
 TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные не горят, на сайте свой кэш на 10 мин
 TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот топ-500 + мест отслеживаемых ферм
+LP_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой пересбор LP-лидерборда пула FLOWER/USDC
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Monday)
@@ -75,6 +77,24 @@ async def game_update_notify_loop(bot: Bot) -> None:
     from jobs.game_update_notify import run_game_update_notify_loop
 
     await run_game_update_notify_loop(bot)
+
+
+async def lp_leaderboard_loop() -> None:
+    """Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base)."""
+    if not os.environ.get("GRAPH_API_KEY") or not os.environ.get("SUBGRAPH_ID"):
+        log.warning(
+            "GRAPH_API_KEY/SUBGRAPH_ID не заданы — почасовой пересбор LP-лидерборда пропущен"
+        )
+        return
+
+    from jobs.lp_leaderboard import run_lp_leaderboard
+
+    while True:
+        try:
+            await run_lp_leaderboard()
+        except Exception:
+            log.exception("Ошибка почасового пересбора LP-лидерборда")
+        await asyncio.sleep(LP_LEADERBOARD_INTERVAL_SEC)
 
 
 async def tickets_weekly_notify_loop(bot: Bot) -> None:
@@ -143,6 +163,7 @@ async def main():
     tickets_task = asyncio.create_task(tickets_leaderboard_loop())
     weekly_notify_task = asyncio.create_task(tickets_weekly_notify_loop(bot))
     game_update_task = asyncio.create_task(game_update_notify_loop(bot))
+    lp_leaderboard_task = asyncio.create_task(lp_leaderboard_loop())
 
     log.info("Бот запущен, начинаю polling…")
     try:
@@ -154,6 +175,7 @@ async def main():
         tickets_task.cancel()
         weekly_notify_task.cancel()
         game_update_task.cancel()
+        lp_leaderboard_task.cancel()
         await db.close_pool()
 
 
