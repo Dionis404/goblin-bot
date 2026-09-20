@@ -1,4 +1,4 @@
-"""Тесты для shared/farm_cache.py: refresh_farm, refresh_farms_batch и связанные сценарии."""
+"""Тесты для shared/farm_cache.py: refresh_farm и связанные сценарии."""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -90,128 +90,42 @@ async def test_refresh_skips_when_already_refreshing():
     fetch_mock.assert_not_called()
 
 
-def _make_row(farm_id: int, tracked: bool = True) -> FakeRecord:
-    now = datetime.now(timezone.utc)
-    return FakeRecord(
-        farm_id=farm_id, data=None, updated_at=now,
-        is_refreshing=False, tracked=tracked,
-        first_seen=now, last_requested_at=now,
-    )
-
-
 @pytest.mark.asyncio
-async def test_refresh_farms_batch_normalizes_response_shape():
-    """getFarms отдаёт farms[id] без обёртки — должно нормализоваться в {"id", "farm"}."""
+async def test_upsert_farm_data_creates_and_updates_without_lock():
+    """upsert_farm_data пишет данные независимо от is_refreshing, в т.ч. для новой строки."""
     pool = FakePool()
-    pool._rows[121500] = _make_row(121500)
-    pool._rows[121501] = _make_row(121501)
 
-    api_response = {
-        "farms": {
-            "121500": {"balance": "10", "coins": 5},
-            "121501": {"balance": "20", "coins": 8},
+    await farm_cache.upsert_farm_data(pool, 55, {"id": 55, "farm": {"balance": "1"}})
+    row = await farm_cache.get_farm(pool, 55)
+    assert row["data"] == {"id": 55, "farm": {"balance": "1"}}
+
+    await farm_cache.upsert_farm_data(pool, 55, {"id": 55, "farm": {"balance": "2"}})
+    row = await farm_cache.get_farm(pool, 55)
+    assert row["data"] == {"id": 55, "farm": {"balance": "2"}}
+
+
+def test_parse_farmer_stats_extracts_all_fields():
+    farm_entry = {
+        "id": 62559,
+        "farm": {
+            "username": "Dionis",
+            "balance": "1250.421",
+            "coins": 128350,
+            "bumpkin": {"experience": 105300},
         },
-        "skipped": [],
     }
-    resp = AsyncMock()
-    resp.raise_for_status = lambda: None
-    resp.json = lambda: api_response
-    client = AsyncMock()
-    client.post.return_value = resp
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = False
-
-    with patch("shared.farm_cache.httpx.AsyncClient", return_value=client):
-        result = await farm_cache.refresh_farms_batch([121500, 121501], pool)
-
-    assert result == {"succeeded": 2, "skipped": 0, "failed": 0}
-    row = await farm_cache.get_farm(pool, 121500)
-    assert row["data"] == {"id": 121500, "farm": {"balance": "10", "coins": 5}}
+    stats = farm_cache.parse_farmer_stats(farm_entry)
+    assert stats == {
+        "game_username": "Dionis",
+        "xp": 105300.0,
+        "balance": 1250.421,
+        "coins": 128350.0,
+    }
 
 
-@pytest.mark.asyncio
-async def test_refresh_farms_batch_marks_api_skipped_ids():
-    """Ферма, отсутствующая в ответе (API skipped), учитывается отдельно и не ломает остальных."""
-    pool = FakePool()
-    pool._rows[1] = _make_row(1)
-    pool._rows[2] = _make_row(2)
-
-    api_response = {"farms": {"1": {"balance": "10"}}, "skipped": [2]}
-    resp = AsyncMock()
-    resp.raise_for_status = lambda: None
-    resp.json = lambda: api_response
-    client = AsyncMock()
-    client.post.return_value = resp
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = False
-
-    with patch("shared.farm_cache.httpx.AsyncClient", return_value=client):
-        result = await farm_cache.refresh_farms_batch([1, 2], pool)
-
-    assert result == {"succeeded": 1, "skipped": 1, "failed": 0}
-    assert pool._rows[2]["is_refreshing"] is False
-    assert pool._rows[2]["data"] is None  # старые данные (их и не было) не тронуты
-
-
-@pytest.mark.asyncio
-async def test_refresh_farms_batch_keeps_old_data_on_api_error():
-    """Ошибка внешнего API на весь batch не должна затирать данные и виснуть на is_refreshing."""
-    pool = FakePool()
-    old_data = {"id": 5, "farm": {"username": "goblin"}}
-    pool._rows[5] = FakeRecord(
-        farm_id=5, data=old_data, updated_at=datetime.now(timezone.utc),
-        is_refreshing=False, tracked=True,
-        first_seen=datetime.now(timezone.utc), last_requested_at=datetime.now(timezone.utc),
-    )
-
-    with patch(
-        "shared.farm_cache._fetch_batch_from_sfl", AsyncMock(side_effect=TimeoutError("boom"))
-    ):
-        result = await farm_cache.refresh_farms_batch([5], pool)
-
-    assert result == {"succeeded": 0, "skipped": 0, "failed": 1}
-    row = await farm_cache.get_farm(pool, 5)
-    assert row["data"] == old_data
-    assert row["is_refreshing"] is False
-
-
-@pytest.mark.asyncio
-async def test_refresh_farms_batch_splits_into_chunks_of_100(monkeypatch):
-    """Список больше BATCH_MAX_IDS должен уйти несколькими batch-запросами."""
-    pool = FakePool()
-    farm_ids = list(range(1, 151))  # 150 ферм -> 2 запроса (100 + 50)
-    for fid in farm_ids:
-        pool._rows[fid] = _make_row(fid)
-
-    fetch_mock = AsyncMock(
-        side_effect=lambda ids: ({fid: {"id": fid, "farm": {}} for fid in ids}, [])
-    )
-    with patch("shared.farm_cache._fetch_batch_from_sfl", fetch_mock):
-        result = await farm_cache.refresh_farms_batch(farm_ids, pool)
-
-    assert result == {"succeeded": 150, "skipped": 0, "failed": 0}
-    assert fetch_mock.await_count == 2
-    call_sizes = sorted(len(c.args[0]) for c in fetch_mock.await_args_list)
-    assert call_sizes == [50, 100]
-
-
-@pytest.mark.asyncio
-async def test_refresh_farms_batch_skips_farm_already_refreshing():
-    """Ферма с is_refreshing=true не должна попасть в batch-запрос."""
-    pool = FakePool()
-    pool._rows[1] = _make_row(1)
-    pool._rows[2] = FakeRecord(
-        farm_id=2, data=None, updated_at=datetime.now(timezone.utc),
-        is_refreshing=True, tracked=True,
-        first_seen=datetime.now(timezone.utc), last_requested_at=datetime.now(timezone.utc),
-    )
-
-    fetch_mock = AsyncMock(return_value=({1: {"id": 1, "farm": {}}}, []))
-    with patch("shared.farm_cache._fetch_batch_from_sfl", fetch_mock):
-        result = await farm_cache.refresh_farms_batch([1, 2], pool)
-
-    fetch_mock.assert_awaited_once_with([1])
-    assert result == {"succeeded": 1, "skipped": 0, "failed": 0}
+def test_parse_farmer_stats_handles_missing_fields():
+    stats = farm_cache.parse_farmer_stats({"id": 1, "farm": {}})
+    assert stats == {"game_username": None, "xp": None, "balance": None, "coins": None}
 
 
 @pytest.mark.asyncio

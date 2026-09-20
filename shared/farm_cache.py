@@ -1,5 +1,4 @@
 """Кэширующий слой между goblin-api и внешним SFL community API."""
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +15,31 @@ SFL_TIMEOUT = 8.0
 
 def is_stale(updated_at: datetime) -> bool:
     return datetime.now(timezone.utc) - updated_at > STALE_AFTER
+
+
+def _to_float(value) -> float | None:
+    """balance/coins приходят строкой или числом — приводим к float."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def parse_farmer_stats(farm_entry: dict) -> dict:
+    """
+    Извлекает {game_username, xp, balance, coins} из объекта фермы в виде,
+    который отдаёт и поштучный, и batch-эндпоинт после нормализации
+    ({"id", "farm": {...}} — см. _fetch_batch_from_sfl / _fetch_from_sfl).
+    """
+    farm = farm_entry.get("farm") or {}
+    return {
+        "game_username": farm.get("username"),
+        "xp": _to_float((farm.get("bumpkin") or {}).get("experience")),
+        "balance": _to_float(farm.get("balance")),
+        "coins": _to_float(farm.get("coins")),
+    }
 
 
 async def get_farm(pool: asyncpg.Pool, farm_id: int) -> asyncpg.Record | None:
@@ -45,6 +69,26 @@ async def ensure_placeholder(pool: asyncpg.Pool, farm_id: int) -> None:
         """,
         farm_id,
         None,
+    )
+
+
+async def upsert_farm_data(pool: asyncpg.Pool, farm_id: int, data: dict) -> None:
+    """
+    Безусловно записывает свежие данные фермы (создаёт строку, если её ещё
+    нет). В отличие от refresh_farm/refresh_farms_batch не участвует в
+    is_refreshing-локе — предназначена для планового batch-прохода
+    (jobs/daily_refresh.py), не для конкурентного ленивого обновления по
+    запросу с сайта.
+    """
+    await pool.execute(
+        """
+        INSERT INTO farm_cache (farm_id, data, tracked, first_seen, last_requested_at, updated_at)
+        VALUES ($1, $2, true, now(), now(), now())
+        ON CONFLICT (farm_id) DO UPDATE
+            SET data = EXCLUDED.data, updated_at = now()
+        """,
+        farm_id,
+        data,
     )
 
 
@@ -136,71 +180,3 @@ async def refresh_farm(farm_id: int, pool: asyncpg.Pool) -> None:
         farm_id,
         data,
     )
-
-
-async def refresh_farms_batch(
-    farm_ids: list[int], pool: asyncpg.Pool, delay_between_chunks_sec: float = 0.0
-) -> dict:
-    """
-    Обновляет кэш ферм из farm_cache через POST /community/getFarms — список
-    любого размера сам режется на подпачки по BATCH_MAX_IDS (community API
-    троттлит запросы, поэтому между HTTP-вызовами выдерживается пауза
-    delay_between_chunks_sec, если подпачек больше одной). Как и refresh_farm,
-    не дублирует параллельные обновления и не трогает старые данные при ошибке.
-
-    Возвращает {"succeeded": int, "skipped": int, "failed": int}.
-    """
-    succeeded = skipped_count = failed = 0
-
-    for i in range(0, len(farm_ids), BATCH_MAX_IDS):
-        if i > 0 and delay_between_chunks_sec:
-            await asyncio.sleep(delay_between_chunks_sec)
-
-        chunk = farm_ids[i:i + BATCH_MAX_IDS]
-
-        claimed_rows = await pool.fetch(
-            """
-            UPDATE farm_cache SET is_refreshing = true
-            WHERE farm_id = ANY($1::bigint[]) AND is_refreshing = false
-            RETURNING farm_id
-            """,
-            chunk,
-        )
-        claimed = [r["farm_id"] for r in claimed_rows]
-        if not claimed:
-            continue
-
-        try:
-            farms, api_skipped = await _fetch_batch_from_sfl(claimed)
-        except Exception:
-            log.warning("Не удалось обновить batch из %s ферм", len(claimed), exc_info=True)
-            await pool.execute(
-                "UPDATE farm_cache SET is_refreshing = false WHERE farm_id = ANY($1::bigint[])",
-                claimed,
-            )
-            failed += len(claimed)
-            continue
-
-        for farm_id in claimed:
-            data = farms.get(farm_id)
-            if data is None:
-                skipped_count += 1
-                await pool.execute(
-                    "UPDATE farm_cache SET is_refreshing = false WHERE farm_id = $1", farm_id
-                )
-                continue
-            await pool.execute(
-                """
-                UPDATE farm_cache
-                SET data = $2, updated_at = now(), is_refreshing = false
-                WHERE farm_id = $1
-                """,
-                farm_id,
-                data,
-            )
-            succeeded += 1
-
-        if api_skipped:
-            log.info("getFarms вернул skipped для %s ферм: %s", len(api_skipped), api_skipped)
-
-    return {"succeeded": succeeded, "skipped": skipped_count, "failed": failed}

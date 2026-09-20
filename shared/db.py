@@ -103,3 +103,32 @@ async def list_farmers() -> list[asyncpg.Record]:
     return await pool.fetch(
         "SELECT * FROM farmers ORDER BY xp DESC NULLS LAST"
     )
+
+
+async def list_farmer_farm_ids() -> list[int]:
+    """farm_id всех привязанных фермеров — для батч-обновления статов."""
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT farm_id FROM farmers")
+    return [r["farm_id"] for r in rows]
+
+
+async def update_farmer_stats(
+    farm_id: int,
+    game_username: str | None,
+    xp: float | None,
+    balance: float | None,
+    coins: float | None,
+) -> None:
+    """
+    Обновляет снимок статов фермера (xp/balance/coins/ник) свежими данными
+    из SFL API — на /start эти поля пишутся один раз и без этого не меняются.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE farmers
+        SET game_username = $2, xp = $3, balance = $4, coins = $5, updated_at = now()
+        WHERE farm_id = $1
+        """,
+        farm_id, game_username, xp, balance, coins,
+    )

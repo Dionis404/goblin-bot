@@ -8,7 +8,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - `/start` — привязка номера фермы к Telegram-аккаунту (проверка через community API SFL, подтверждение по нику, привязка 1-к-1 и без возможности сменить)
 - `/tracking_lb` — включить/выключить личное отслеживание места в лидерборде тикетов; если ферма в топ-1200, раз в неделю (ночь с ВС на ПН, 03:00 МСК) сводка уходит в группу
 - `/refresh_lp` — админская команда, ручной пересбор LP-лидерборда пула FLOWER/USDC
-- `/refresh_farms` — админская команда, ручной batch-прогрев farm_cache подписанных (tracked) ферм
+- `/refresh_farms` — админская команда, ручное обновление xp/balance/coins/ника всех фермеров сообщества (`farmers` + `farm_cache`)
 - `/subscriber_notify on|off` — админская команда, уведомления в личку о подписке/отписке от канала `@URGSFL`
 - Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` (polling, без вебхука на сайте)
 - Считает подписчиков `@URGSFL` каждые 15 минут → `telegram_stats`
@@ -18,7 +18,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - Почасовой снэпшот топ-500 + места отслеживаемых ферм → `tickets_leaderboard.py` (топ-500 переиспользуется для tracked-ферм, чтобы экономить запросы к API; фермы с рангом ниже 2000 навсегда исключаются из отдельного опроса — `farmers.tickets_excluded`)
 - Еженедельная рассылка отчёта по местам → `tickets_weekly_notify.py`
 - Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base, через The Graph) → `lp_leaderboard.py` (пропускается с предупреждением в логах, если `GRAPH_API_KEY`/`SUBGRAPH_ID` не заданы)
-- Ежедневный батч-прогрев кэша всех подписанных (tracked) ферм → `daily_refresh.py` (можно запустить и вручную/по крону — `python -m jobs.daily_refresh`)
+- Ежедневное обновление данных всех фермеров сообщества (`farmers.xp/balance/coins/game_username` + `farm_cache`) → `daily_refresh.py` (можно запустить и вручную/по крону — `python -m jobs.daily_refresh`)
 
 **API для сайта (`goblin-api`, доступен только внутри docker-сети `shared-net`)**
 - `GET /community/farmers` — список привязанных фермеров

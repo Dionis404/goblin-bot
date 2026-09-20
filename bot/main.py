@@ -99,7 +99,7 @@ async def lp_leaderboard_loop() -> None:
 
 
 async def daily_refresh_loop() -> None:
-    """Раз в сутки батч-обновляет farm_cache всех подписанных (tracked) ферм."""
+    """Раз в сутки обновляет данные (xp/balance/coins/ник) всех фермеров сообщества."""
     from jobs.daily_refresh import run_daily_refresh
 
     while True:

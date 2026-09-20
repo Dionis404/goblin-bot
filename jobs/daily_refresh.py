@@ -1,13 +1,21 @@
 """
-Ежедневный батч-прогрев кэша ферм (farm_cache).
+Ежедневное обновление данных фермеров сообщества (farmers + farm_cache).
 
-Обновляет все отслеживаемые фермы (tracked = true) пачками по 100 через
+Обновляет ВСЕХ привязанных через /start фермеров (таблица farmers, а не
+farm_cache.tracked — это разные вещи, см. историю) пачками по 100 через
 POST /community/getFarms (deprecated, но кратно дешевле по rate limit, чем
-поштучные GET /community/farms/{id} — см. shared/farm_cache.refresh_farms_batch)
-с паузой между пачками. Крутится раз в сутки прямо в основном цикле бота
-(bot/main.py, daily_refresh_loop). Можно запустить и отдельно — вручную
-или из cron: python -m jobs.daily_refresh
+поштучные GET /community/farms/{id}) с паузой между пачками.
+
+Пишет в две таблицы за один и тот же ответ API:
+- farmers.xp/balance/coins/game_username — иначе они остаются снимком на
+  момент /start и никогда не меняются (то, что видно на странице сообщества);
+- farm_cache.data — попутно освежает и кэш для /farm/{id}, /farms.
+
+Крутится раз в сутки прямо в основном цикле бота (bot/main.py,
+daily_refresh_loop). Можно запустить и отдельно — вручную или из cron:
+python -m jobs.daily_refresh
 """
+import asyncio
 import logging
 
 from shared import db, farm_cache
@@ -18,20 +26,45 @@ DELAY_BETWEEN_BATCHES_SEC = 5.0  # community API троттлит ~1 запро�
 
 
 async def run_daily_refresh() -> dict:
-    """Обновляет все tracked-фермы пачками. Возвращает {"succeeded", "skipped", "failed"}."""
+    """Обновляет статы всех фермеров сообщества. Возвращает {"succeeded", "skipped", "failed"}."""
     pool = await db.get_pool()
-    rows = await pool.fetch("SELECT farm_id FROM farm_cache WHERE tracked = true")
-    farm_ids = [r["farm_id"] for r in rows]
+    farm_ids = await db.list_farmer_farm_ids()
 
-    result = await farm_cache.refresh_farms_batch(
-        farm_ids, pool, delay_between_chunks_sec=DELAY_BETWEEN_BATCHES_SEC
-    )
+    succeeded = skipped = failed = 0
+
+    for i in range(0, len(farm_ids), farm_cache.BATCH_MAX_IDS):
+        if i > 0:
+            await asyncio.sleep(DELAY_BETWEEN_BATCHES_SEC)
+
+        chunk = farm_ids[i:i + farm_cache.BATCH_MAX_IDS]
+        try:
+            farms, api_skipped = await farm_cache._fetch_batch_from_sfl(chunk)
+        except Exception:
+            log.warning("Не удалось обновить batch из %s фермеров", len(chunk), exc_info=True)
+            failed += len(chunk)
+            continue
+
+        for farm_id in chunk:
+            farm_entry = farms.get(farm_id)
+            if farm_entry is None:
+                skipped += 1
+                continue
+
+            stats = farm_cache.parse_farmer_stats(farm_entry)
+            await db.update_farmer_stats(
+                farm_id, stats["game_username"], stats["xp"], stats["balance"], stats["coins"]
+            )
+            await farm_cache.upsert_farm_data(pool, farm_id, farm_entry)
+            succeeded += 1
+
+        if api_skipped:
+            log.info("getFarms вернул skipped для %s фермеров: %s", len(api_skipped), api_skipped)
 
     log.info(
-        "Батч-прогрев farm_cache завершён: %s успешно, %s пропущено, %s с ошибкой (всего %s)",
-        result["succeeded"], result["skipped"], result["failed"], len(farm_ids),
+        "Обновление фермеров сообщества завершено: %s успешно, %s пропущено, %s с ошибкой (всего %s)",
+        succeeded, skipped, failed, len(farm_ids),
     )
-    return result
+    return {"succeeded": succeeded, "skipped": skipped, "failed": failed}
 
 
 async def _main() -> None:

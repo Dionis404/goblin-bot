@@ -56,6 +56,19 @@ class FakePool:
                     last_requested_at=_now(),
                 )
             return
+        if "INSERT INTO farm_cache" in query and "SET data = EXCLUDED.data" in query:
+            farm_id, data = args
+            row = self._rows.get(farm_id)
+            if row is None:
+                self._rows[farm_id] = FakeRecord(
+                    farm_id=farm_id, data=data, updated_at=_now(),
+                    is_refreshing=False, tracked=True, first_seen=_now(),
+                    last_requested_at=_now(),
+                )
+            else:
+                row["data"] = data
+                row["updated_at"] = _now()
+            return
         if query.startswith("UPDATE farm_cache SET is_refreshing = false") and "ANY($1" in query:
             ids = args[0]
             for fid in ids:
