@@ -11,6 +11,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - `/refresh_farms` — админская команда, ручное обновление xp/balance/coins/ника всех фермеров сообщества (`farmers` + `farm_cache`)
 - `/subscriber_notify on|off` — админская команда, уведомления в личку о подписке/отписке от канала `@URGSFL`
 - `/tickets_weekly_notify on|off` — админская команда, вкл/выкл еженедельную рассылку отчёта по лидерборду тикетов в группу
+- `/admin` — админская команда, справка со списком всех админских команд (в меню "☰" бота они не светятся)
 - Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` (polling, без вебхука на сайте)
 - Считает подписчиков `@URGSFL` каждые 15 минут → `telegram_stats`
 - Защита от rate limit SFL API (throttle + anti-spam + retry на 429)

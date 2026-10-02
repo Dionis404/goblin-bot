@@ -374,6 +374,24 @@ async def tickets_weekly_notify_toggle(message: Message):
     )
 
 
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Справка по админским командам (список не светится в меню "☰" бота)."""
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    await message.answer(
+        "🛠 <b>Админские команды</b>\n\n"
+        "/refresh_lp — ручной пересбор LP-лидерборда пула FLOWER/USDC\n"
+        "/refresh_farms — ручное обновление xp/balance/coins/ника всех фермеров сообщества\n"
+        "/backfill_post_images — восстановление картинок старых постов канала\n"
+        "/tickets_check — ручной прогон почасового сбора лидерборда тикетов + сводка по tracked-фермам\n"
+        "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
+        "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
+        "/admin — эта справка"
+    )
+
+
 @router.message()
 async def handle_unknown(message: Message):
     await message.answer(
