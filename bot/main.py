@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
@@ -14,7 +14,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommand
 from bot.channel import router as channel_router
 from bot.handlers import router
 from bot.subscriber_notify import router as subscriber_notify_router
-from shared import bot_settings, config, db, telegram_stats
+from shared import bot_settings, config, db, telegram_stats, tickets_leaderboard
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("goblin-bot")
@@ -29,6 +29,13 @@ WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Mon
 WEEKLY_NOTIFY_HOUR = 3
 WEEKLY_NOTIFY_CHECK_INTERVAL_SEC = 300  # как часто перепроверять, не пропущено ли окно
 WEEKLY_NOTIFY_LAST_SENT_KEY = "tickets_weekly_notify_last_sent"
+
+# Новая глава SFL стартует 2 ноября 2026, 00:00 UTC — игра обнуляет тикеты,
+# поэтому старое farmers.tickets_excluded (низкий ранг прошлой главы) больше
+# не актуально и должно быть сброшено один раз при наступлении этого момента.
+NEW_CHAPTER_START = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+CHAPTER_RESET_CHECK_INTERVAL_SEC = 300
+CHAPTER_RESET_DONE_KEY = "tickets_excluded_reset_2026_11_02"
 
 
 async def refresh_telegram_stats_loop(bot: Bot) -> None:
@@ -134,6 +141,30 @@ async def tickets_weekly_notify_loop(bot: Bot) -> None:
         await asyncio.sleep(WEEKLY_NOTIFY_CHECK_INTERVAL_SEC)
 
 
+async def tickets_excluded_reset_loop() -> None:
+    """
+    Одноразовый сброс farmers.tickets_excluded при наступлении новой главы
+    (см. NEW_CHAPTER_START) — старый "низкий ранг" из прошлой главы перестаёт
+    быть актуальным, т.к. тикеты обнуляются игрой. Флаг в bot_settings защищает
+    от повторного сброса при рестартах процесса после NEW_CHAPTER_START.
+    """
+    while True:
+        if datetime.now(timezone.utc) >= NEW_CHAPTER_START:
+            already_done = await bot_settings.get_bool(CHAPTER_RESET_DONE_KEY, default=False)
+            if not already_done:
+                try:
+                    pool = await db.get_pool()
+                    count = await tickets_leaderboard.reset_all_excluded(pool)
+                    await bot_settings.set_bool(CHAPTER_RESET_DONE_KEY, True)
+                    log.info(
+                        "Новая глава: сброшен tickets_excluded у %s фермеров", count
+                    )
+                except Exception:
+                    log.exception("Ошибка сброса tickets_excluded при смене главы")
+            return
+        await asyncio.sleep(CHAPTER_RESET_CHECK_INTERVAL_SEC)
+
+
 async def main():
     if not config.BOT_TOKEN:
         raise RuntimeError(
@@ -178,6 +209,7 @@ async def main():
     game_update_task = asyncio.create_task(game_update_notify_loop(bot))
     lp_leaderboard_task = asyncio.create_task(lp_leaderboard_loop())
     daily_refresh_task = asyncio.create_task(daily_refresh_loop())
+    chapter_reset_task = asyncio.create_task(tickets_excluded_reset_loop())
 
     log.info("Бот запущен, начинаю polling…")
     try:
@@ -191,6 +223,7 @@ async def main():
         game_update_task.cancel()
         lp_leaderboard_task.cancel()
         daily_refresh_task.cancel()
+        chapter_reset_task.cancel()
         await db.close_pool()
 
 

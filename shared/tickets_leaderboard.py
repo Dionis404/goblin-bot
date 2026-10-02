@@ -151,6 +151,18 @@ async def mark_excluded(pool: asyncpg.Pool, farm_id: int) -> None:
     )
 
 
+async def reset_all_excluded(pool: asyncpg.Pool) -> int:
+    """
+    Сбрасывает tickets_excluded всем фермерам — вызывается один раз со стартом
+    новой главы (тикеты обнуляются игрой, старый "низкий ранг" больше не
+    актуален). Возвращает число затронутых строк.
+    """
+    result = await pool.execute(
+        "UPDATE farmers SET tickets_excluded = false WHERE tickets_excluded = true"
+    )
+    return int(result.split()[-1])
+
+
 async def get_tracked_farmers(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     """Отслеживаемые фермеры (farm_id + telegram_username + tickets_excluded)."""
     return await pool.fetch(

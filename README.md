@@ -10,12 +10,13 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - `/refresh_lp` — админская команда, ручной пересбор LP-лидерборда пула FLOWER/USDC
 - `/refresh_farms` — админская команда, ручное обновление xp/balance/coins/ника всех фермеров сообщества (`farmers` + `farm_cache`)
 - `/subscriber_notify on|off` — админская команда, уведомления в личку о подписке/отписке от канала `@URGSFL`
+- `/tickets_weekly_notify on|off` — админская команда, вкл/выкл еженедельную рассылку отчёта по лидерборду тикетов в группу
 - Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` (polling, без вебхука на сайте)
 - Считает подписчиков `@URGSFL` каждые 15 минут → `telegram_stats`
 - Защита от rate limit SFL API (throttle + anti-spam + retry на 429)
 
 **Фоновые задачи (`jobs/`, крутятся внутри `bot/main.py`)**
-- Почасовой снэпшот топ-500 + места отслеживаемых ферм → `tickets_leaderboard.py` (топ-500 переиспользуется для tracked-ферм, чтобы экономить запросы к API; фермы с рангом ниже 2000 навсегда исключаются из отдельного опроса — `farmers.tickets_excluded`)
+- Почасовой снэпшот топ-500 + места отслеживаемых ферм → `tickets_leaderboard.py` (топ-500 переиспользуется для tracked-ферм, чтобы экономить запросы к API; фермы с рангом ниже 2000 навсегда исключаются из отдельного опроса — `farmers.tickets_excluded`; при смене главы это неактуально, поэтому `tickets_excluded` сбрасывается автоматически один раз (см. `tickets_excluded_reset_loop` в `bot/main.py`, дата `NEW_CHAPTER_START` зашита в коде — сейчас 2026-11-02 00:00 UTC, нужно обновлять на каждую новую главу)
 - Еженедельная рассылка отчёта по местам → `tickets_weekly_notify.py`
 - Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base, через The Graph) → `lp_leaderboard.py` (пропускается с предупреждением в логах, если `GRAPH_API_KEY`/`SUBGRAPH_ID` не заданы)
 - Ежедневное обновление данных всех фермеров сообщества (`farmers.xp/balance/coins/game_username` + `farm_cache`) → `daily_refresh.py` (можно запустить и вручную/по крону — `python -m jobs.daily_refresh`)

@@ -15,9 +15,11 @@ from datetime import datetime, timezone
 
 from aiogram import Bot
 
-from shared import config, db, tickets_leaderboard
+from shared import bot_settings, config, db, tickets_leaderboard
 
 log = logging.getLogger(__name__)
+
+SETTING_KEY = "tickets_weekly_notify_enabled"
 
 
 def _display_name(telegram_username: str | None, game_username: str | None, farm_id: int) -> str:
@@ -67,6 +69,10 @@ async def run_tickets_weekly_notify(bot: Bot) -> dict:
     if config.TICKETS_NOTIFY_CHAT_ID is None:
         log.warning("TICKETS_NOTIFY_CHAT_ID не задан — еженедельное уведомление пропущено")
         return {"sent": False, "reason": "no_chat_id"}
+
+    if not await bot_settings.get_bool(SETTING_KEY, default=True):
+        log.info("Еженедельное уведомление о лидерборде тикетов выключено (/tickets_weekly_notify off)")
+        return {"sent": False, "reason": "disabled"}
 
     report = await build_weekly_report()
     text = format_report(report)

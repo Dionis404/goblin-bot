@@ -347,6 +347,33 @@ async def subscriber_notify_toggle(message: Message):
     )
 
 
+@router.message(Command("tickets_weekly_notify"))
+async def tickets_weekly_notify_toggle(message: Message):
+    """Вкл/выкл еженедельную рассылку отчёта по лидерборду тикетов в группу."""
+    if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
+        return
+
+    from jobs.tickets_weekly_notify import SETTING_KEY as TICKETS_WEEKLY_NOTIFY_KEY
+
+    args = message.text.split(maxsplit=1)
+    arg = args[1].strip().lower() if len(args) > 1 else ""
+
+    if arg not in ("on", "off"):
+        enabled = await bot_settings.get_bool(TICKETS_WEEKLY_NOTIFY_KEY, default=True)
+        await message.answer(
+            f"Еженедельная рассылка отчёта по лидерборду тикетов в группу: "
+            f"<b>{'включена' if enabled else 'выключена'}</b>.\n"
+            f"Переключить: /tickets_weekly_notify on|off"
+        )
+        return
+
+    await bot_settings.set_bool(TICKETS_WEEKLY_NOTIFY_KEY, arg == "on")
+    await message.answer(
+        f"{'✅ Включил' if arg == 'on' else '🔕 Выключил'} еженедельную рассылку отчёта "
+        f"по лидерборду тикетов в группу."
+    )
+
+
 @router.message()
 async def handle_unknown(message: Message):
     await message.answer(
