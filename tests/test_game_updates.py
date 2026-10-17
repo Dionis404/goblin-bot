@@ -166,3 +166,29 @@ async def test_fetch_latest_release_raises_when_feed_empty():
     with patch("shared.game_updates.httpx.AsyncClient", return_value=client):
         with pytest.raises(game_updates.NoReleasesFound):
             await game_updates.fetch_latest_release()
+
+
+def test_format_message_escapes_html_from_changelog():
+    buckets = {"feat": ["Fix <Modal> & <b>stuff"], "fix": [], "chore": [], "other": []}
+    text = game_updates.format_message("v1 <beta>", "https://example.com/?a=1&b=2", buckets)
+
+    assert "<Modal>" not in text
+    assert "• Fix &lt;Modal&gt; &amp; &lt;b&gt;stuff" in text
+    assert "🌾 v1 &lt;beta&gt;" in text
+    assert "https://example.com/?a=1&amp;b=2" in text
+
+
+def test_format_message_strips_links_from_items():
+    buckets = {
+        "feat": ["Новинка, подробнее на https://evil.example/x и t.me/scam"],
+        "fix": ["https://only-a-link.example"],
+        "chore": [],
+        "other": [],
+    }
+    text = game_updates.format_message("v1", "https://github.com/x/y/releases/tag/v1", buckets)
+
+    assert "evil.example" not in text
+    assert "t.me/scam" not in text
+    assert "only-a-link" not in text
+    assert "🐛" not in text  # пункт из одной ссылки пропал целиком — секции нет
+    assert "🔗 https://github.com/x/y/releases/tag/v1" in text

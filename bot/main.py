@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
@@ -128,16 +129,25 @@ async def tickets_weekly_notify_loop(bot: Bot) -> None:
     """
     from jobs.tickets_weekly_notify import run_tickets_weekly_notify
 
+    # Дублирует отметку из bot_settings в памяти: если отчёт ушёл, а запись
+    # в БД упала — без этого отчёт повторялся бы каждые 5 минут.
+    sent_window: str | None = None
+
     while True:
         window = _current_notify_window(datetime.now(MOSCOW_TZ))
-        if window is not None:
-            last_sent = await bot_settings.get_str(WEEKLY_NOTIFY_LAST_SENT_KEY)
-            if last_sent != window:
-                try:
+        if window is not None and window != sent_window:
+            # Всё внутри try: необработанная ошибка (например, БД недоступна)
+            # молча убила бы задачу, и отчёты прекратились бы до рестарта.
+            try:
+                last_sent = await bot_settings.get_str(WEEKLY_NOTIFY_LAST_SENT_KEY)
+                if last_sent == window:
+                    sent_window = window
+                else:
                     await run_tickets_weekly_notify(bot)
+                    sent_window = window
                     await bot_settings.set_str(WEEKLY_NOTIFY_LAST_SENT_KEY, window)
-                except Exception:
-                    log.exception("Ошибка еженедельного уведомления о лидерборде тикетов")
+            except Exception:
+                log.exception("Ошибка еженедельного уведомления о лидерборде тикетов")
         await asyncio.sleep(WEEKLY_NOTIFY_CHECK_INTERVAL_SEC)
 
 
@@ -150,18 +160,19 @@ async def tickets_excluded_reset_loop() -> None:
     """
     while True:
         if datetime.now(timezone.utc) >= NEW_CHAPTER_START:
-            already_done = await bot_settings.get_bool(CHAPTER_RESET_DONE_KEY, default=False)
-            if not already_done:
-                try:
+            try:
+                already_done = await bot_settings.get_bool(CHAPTER_RESET_DONE_KEY, default=False)
+                if not already_done:
                     pool = await db.get_pool()
                     count = await tickets_leaderboard.reset_all_excluded(pool)
                     await bot_settings.set_bool(CHAPTER_RESET_DONE_KEY, True)
                     log.info(
                         "Новая глава: сброшен tickets_excluded у %s фермеров", count
                     )
-                except Exception:
-                    log.exception("Ошибка сброса tickets_excluded при смене главы")
-            return
+                return
+            except Exception:
+                # Не выходим — повторим через CHAPTER_RESET_CHECK_INTERVAL_SEC
+                log.exception("Ошибка сброса tickets_excluded при смене главы")
         await asyncio.sleep(CHAPTER_RESET_CHECK_INTERVAL_SEC)
 
 
@@ -176,7 +187,10 @@ async def main():
     session = None
     if config.TELEGRAM_PROXY:
         session = AiohttpSession(proxy=config.TELEGRAM_PROXY)
-        log.info("Использую прокси для Telegram: %s", config.TELEGRAM_PROXY)
+        # Только схема и хост — в URL прокси может быть логин:пароль
+        proxy_url = urlsplit(config.TELEGRAM_PROXY)
+        log.info("Использую прокси для Telegram: %s://%s:%s",
+                 proxy_url.scheme, proxy_url.hostname, proxy_url.port)
 
     bot = Bot(
         token=config.BOT_TOKEN,

@@ -3,7 +3,9 @@
 Понимает только те запросы, что использует shared/farm_cache.py.
 """
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from shared.farm_cache import REFRESH_LOCK_TIMEOUT_SEC
 
 
 class FakeRecord(dict):
@@ -42,6 +44,12 @@ class FakePool:
 
     async def execute(self, query: str, *args):
         query = query.strip()
+        if query.startswith("DELETE FROM farm_cache") and "data IS NULL" in query:
+            farm_id = args[0]
+            row = self._rows.get(farm_id)
+            if row is not None and row["data"] is None:
+                del self._rows[farm_id]
+            return
         if query.startswith("UPDATE farm_cache SET last_requested_at"):
             farm_id = args[0]
             if farm_id in self._rows:
@@ -77,7 +85,8 @@ class FakePool:
             return
         if query.startswith("UPDATE farm_cache SET is_refreshing = false"):
             farm_id = args[0]
-            self._rows[farm_id]["is_refreshing"] = False
+            if farm_id in self._rows:
+                self._rows[farm_id]["is_refreshing"] = False
             return
         if query.startswith("UPDATE farm_cache") and "SET data = $2" in query:
             farm_id, data = args
@@ -95,13 +104,17 @@ class FakePool:
             if existing is None:
                 self._rows[farm_id] = FakeRecord(
                     farm_id=farm_id, data=data, updated_at=_now(),
-                    is_refreshing=True, tracked=True, first_seen=_now(),
-                    last_requested_at=_now(),
+                    is_refreshing=True, refresh_started_at=_now(), tracked=True,
+                    first_seen=_now(), last_requested_at=_now(),
                 )
                 return farm_id
-            if existing["is_refreshing"]:
+            # Лок свободен, если не взят, без отметки времени или протух
+            started = existing.get("refresh_started_at")
+            timeout = timedelta(seconds=REFRESH_LOCK_TIMEOUT_SEC)
+            if existing["is_refreshing"] and started is not None and _now() - started < timeout:
                 return None
             existing["is_refreshing"] = True
+            existing["refresh_started_at"] = _now()
             return farm_id
         raise NotImplementedError(query)
 

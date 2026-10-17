@@ -7,15 +7,38 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from bot import sfl_api
-from bot.keyboards import confirm_keyboard, menu_keyboard
+from bot.keyboards import confirm_keyboard, dispute_keyboard, menu_keyboard, unlink_keyboard
 from bot.subscriber_notify import SETTING_KEY as SUBSCRIBER_NOTIFY_KEY
-from shared import bot_settings, config, db, tickets_leaderboard
+from shared import bot_settings, config, db, farm_cache, tickets_leaderboard
+from shared.text import esc, split_message
 
 router = Router()
 log = logging.getLogger(__name__)
 
 # Бот обрабатывает сообщения ТОЛЬКО в личке — в группах молчит
 router.message.filter(F.chat.type == "private")
+
+COMMUNITY_CHAT_URL = "https://t.me/+hSm5ZeGb7ohhYzhi"
+
+# Тоггл уведомлений админу о каждой новой привязке фермы (/bind_notify).
+# Владение фермой не проверяется, поэтому так админ быстро замечает
+# подозрительные привязки и снимает их через /unlink.
+BIND_NOTIFY_KEY = "bind_notify_enabled"
+
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in config.ADMIN_TELEGRAM_IDS
+
+
+def _parse_farm_id(raw: str) -> int | None:
+    """Номер фермы из текста или None, если это не валидный BIGINT > 0."""
+    raw = raw.strip()
+    if not raw.isdigit():
+        return None
+    farm_id = int(raw)
+    if not 0 < farm_id <= farm_cache.MAX_FARM_ID:
+        return None
+    return farm_id
 
 
 def _fmt_num(value, digits: int = 2) -> str:
@@ -31,7 +54,7 @@ async def cmd_start(message: Message):
     if existing:
         await message.answer(
             f"Ты уже привязал ферму <b>#{existing['farm_id']}</b> "
-            f"(<b>{existing['game_username'] or 'без ника'}</b>).\n"
+            f"(<b>{esc(existing['game_username'], empty='без ника')}</b>).\n"
             f"Изменить привязанную ферму нельзя.\n\n"
             f"Отслеживание лидерборда тикетов — команда /tracking_lb.",
             reply_markup=menu_keyboard(existing["tickets_tracked"]),
@@ -42,39 +65,50 @@ async def cmd_start(message: Message):
         "👋 Привет! Это бот сообщества <a href=\"https://t.me/URGSFL\">URG SunflowerLand</a>.\n\n"
         "Чтобы привязать свою ферму Sunflower Land, пришли мне "
         "<b>номер фермы</b> (например: <code>62559</code>).\n\n"
-        "⚠️ Привязать можно только одну ферму, и <b>изменить её потом нельзя</b>.\n\n"
+        "⚠️ Привязать можно только одну ферму, и <b>изменить её потом нельзя</b>.\n"
+        "Если твою ферму уже привязал кто-то другой — всё равно пришли её номер, "
+        "бот предложит сообщить админу.\n\n"
         "🔒 Ваши данные хранятся на сервере в России, не используются в коммерческих целях "
         "и предназначены исключительно для сайта <b>goblincodex.fun</b>."
     )
 
 
+def _farm_taken_text(farm_id: int) -> str:
+    return (
+        f"⚠️ Ферма <b>#{farm_id}</b> уже привязана другим игроком.\n"
+        f"Если это твоя ферма — нажми кнопку ниже, админ получит уведомление и разберётся."
+    )
+
+
 @router.message(F.text.regexp(r"^\s*\d+\s*$"))
 async def handle_farm_id(message: Message):
-    # Уже привязан?
-    if await db.get_farmer_by_telegram(message.from_user.id):
-        existing = await db.get_farmer_by_telegram(message.from_user.id)
-        await message.answer(
-            f"У тебя уже привязана ферма <b>#{existing['farm_id']}</b>. "
-            f"Изменить её нельзя."
-        )
-        return
-
-    farm_id = int(message.text.strip())
-
-    # Ферма уже занята другим пользователем?
-    if await db.get_farmer_by_farm(farm_id):
-        await message.answer(
-            f"⚠️ Ферма <b>#{farm_id}</b> уже привязана другим игроком."
-        )
-        return
-
-    # Anti-spam: один пользователь не чаще, чем раз в N секунд
+    # Anti-spam: один пользователь не чаще, чем раз в N секунд — до любых
+    # запросов в БД/API, чтобы флуд цифрами не нагружал ни то, ни другое.
     from bot.throttle import user_cooldown
     wait = user_cooldown.check(message.from_user.id)
     if wait > 0:
         await message.answer(
             f"⏳ Слишком часто. Подожди {int(wait) + 1} сек и попробуй снова."
         )
+        return
+
+    # Уже привязан?
+    existing = await db.get_farmer_by_telegram(message.from_user.id)
+    if existing:
+        await message.answer(
+            f"У тебя уже привязана ферма <b>#{existing['farm_id']}</b>. "
+            f"Изменить её нельзя."
+        )
+        return
+
+    farm_id = _parse_farm_id(message.text)
+    if farm_id is None:
+        await message.answer("❌ Это не похоже на номер фермы. Проверь и попробуй снова.")
+        return
+
+    # Ферма уже занята другим пользователем?
+    if await db.get_farmer_by_farm(farm_id):
+        await message.answer(_farm_taken_text(farm_id), reply_markup=dispute_keyboard(farm_id))
         return
 
     status_msg = await message.answer("🔍 Проверяю ферму…")
@@ -98,10 +132,9 @@ async def handle_farm_id(message: Message):
         )
         return
 
-    username = farm["username"] or "без ника"
     await status_msg.edit_text(
         f"Ферма <b>{farm_id}</b>\n"
-        f"Ник <b>{username}</b>\n\n"
+        f"Ник <b>{esc(farm['username'], empty='без ника')}</b>\n\n"
         f"⚠️ <b>ВНИМАНИЕ!</b> Изменить номер фермы в будущем нельзя.\n"
         f"Добавляйте только свой номер фермы!\n\n"
         f"Это твоя ферма?",
@@ -111,7 +144,16 @@ async def handle_farm_id(message: Message):
 
 @router.callback_query(F.data.startswith("confirm:"))
 async def confirm_farm(callback: CallbackQuery):
-    farm_id = int(callback.data.split(":", 1)[1])
+    farm_id = _parse_farm_id(callback.data.split(":", 1)[1])
+    if farm_id is None:
+        await callback.answer()
+        return
+
+    from bot.throttle import confirm_cooldown
+    wait = confirm_cooldown.check(callback.from_user.id)
+    if wait > 0:
+        await callback.answer(f"Подожди {int(wait) + 1} сек", show_alert=False)
+        return
 
     # Перепроверяем перед записью (могли привязать в другом чате)
     if await db.get_farmer_by_telegram(callback.from_user.id):
@@ -140,18 +182,93 @@ async def confirm_farm(callback: CallbackQuery):
     if status == "ok":
         await callback.message.edit_text(
             f"✅ Готово! Ферма <b>#{farm_id}</b> "
-            f"(<b>{farm['username'] or 'без ника'}</b>) привязана к тебе.\n\n"
+            f"(<b>{esc(farm['username'], empty='без ника')}</b>) привязана к тебе.\n\n"
             f"Теперь ты в сообществе GoblinCodex 🎉\n\n"
             f"Отслеживание лидерборда тикетов — команда /tracking_lb.",
             reply_markup=menu_keyboard(tickets_tracked=False),
         )
+        await _notify_admin_about_bind(callback, farm_id, farm["username"])
     elif status == "telegram_taken":
         await callback.message.edit_text("У тебя уже привязана ферма. Изменить нельзя.")
     elif status == "farm_taken":
         await callback.message.edit_text(
-            f"⚠️ Ферма <b>#{farm_id}</b> уже привязана другим игроком."
+            _farm_taken_text(farm_id), reply_markup=dispute_keyboard(farm_id)
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dispute:"))
+async def dispute_farm(callback: CallbackQuery):
+    """Жалоба "это моя ферма": админу сразу уходит карточка привязки с кнопками /unlink."""
+    farm_id = _parse_farm_id(callback.data.split(":", 1)[1])
+    if farm_id is None:
+        await callback.answer()
+        return
+
+    if config.NOTIFY_ADMIN_TELEGRAM_ID is None:
+        await callback.message.edit_text(
+            f"Напиши, пожалуйста, в <a href=\"{COMMUNITY_CHAT_URL}\">чат сообщества</a> — "
+            f"админ разберётся с фермой <b>#{farm_id}</b>."
+        )
+        await callback.answer()
+        return
+
+    from bot.throttle import dispute_cooldown
+    wait = dispute_cooldown.check(callback.from_user.id)
+    if wait > 0:
+        await callback.answer(
+            f"Жалоба уже отправлена. Повторно — через {int(wait) // 60 + 1} мин.", show_alert=True
+        )
+        return
+
+    holder = await db.get_farmer_by_farm(farm_id)
+    if holder is None:
+        # Пока человек думал, привязку уже сняли — можно привязывать заново
+        await callback.message.edit_text(
+            f"Ферма <b>#{farm_id}</b> уже свободна — пришли её номер ещё раз, чтобы привязать."
+        )
+        await callback.answer()
+        return
+
+    user = callback.from_user
+    who = f"@{esc(user.username)}" if user.username else esc(user.full_name)
+    try:
+        await callback.bot.send_message(
+            config.NOTIFY_ADMIN_TELEGRAM_ID,
+            f"🚩 <b>Жалоба на привязку фермы</b>\n"
+            f"{who} (<code>{user.id}</code>) утверждает, что ферма <b>#{farm_id}</b> — его.\n\n"
+            f"Сейчас привязана так:\n{_farmer_card(holder)}",
+            reply_markup=unlink_keyboard(farm_id),
+        )
+    except Exception:
+        log.exception("Не удалось отправить админу жалобу на ферму %s", farm_id)
+        await callback.answer("Не получилось отправить жалобу, попробуй позже", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"✅ Жалоба по ферме <b>#{farm_id}</b> отправлена админу.\n"
+        f"Когда привязку проверят, сможешь привязать ферму заново."
+    )
+    await callback.answer()
+
+
+async def _notify_admin_about_bind(callback: CallbackQuery, farm_id: int, game_username: str | None):
+    """Сообщение админу о новой привязке (выключается /bind_notify off)."""
+    if config.NOTIFY_ADMIN_TELEGRAM_ID is None:
+        return
+    try:
+        if not await bot_settings.get_bool(BIND_NOTIFY_KEY, default=True):
+            return
+        user = callback.from_user
+        who = f"@{esc(user.username)}" if user.username else esc(user.full_name)
+        await callback.bot.send_message(
+            config.NOTIFY_ADMIN_TELEGRAM_ID,
+            f"🔗 {who} (<code>{user.id}</code>) привязал ферму <b>#{farm_id}</b> "
+            f"({esc(game_username, empty='без ника')}).\n"
+            f"Снять привязку: <code>/unlink {farm_id}</code>",
+        )
+    except Exception:
+        log.exception("Не удалось уведомить админа о привязке фермы %s", farm_id)
 
 
 @router.callback_query(F.data == "cancel")
@@ -264,7 +381,7 @@ async def tickets_check(message: Message):
         snapshot = await tickets_leaderboard.get_latest_snapshot_before(
             pool, farmer["farm_id"], now
         )
-        name = f"@{farmer['telegram_username']}" if farmer["telegram_username"] else f"#{farmer['farm_id']}"
+        name = f"@{esc(farmer['telegram_username'])}" if farmer["telegram_username"] else f"#{farmer['farm_id']}"
         excluded_note = " ⛔ исключена (ранг слишком низкий)" if farmer["tickets_excluded"] else ""
         if snapshot is None:
             lines.append(
@@ -278,10 +395,11 @@ async def tickets_check(message: Message):
                 f"{snapshot['tickets']} тикетов (снэпшот {age_min} мин назад){excluded_note}"
             )
 
-    text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:3900] + "\n…(обрезано)"
-    await status_msg.edit_text(text)
+    # Режем по строкам, а не text[:N] — обрезка посреди <b> ломала отправку
+    first, *rest = split_message("\n".join(lines))
+    await status_msg.edit_text(first)
+    for chunk in rest:
+        await message.answer(chunk)
 
 
 @router.message(Command("tracking_lb"))
@@ -388,7 +506,145 @@ async def cmd_admin(message: Message):
         "/tickets_check — ручной прогон почасового сбора лидерборда тикетов + сводка по tracked-фермам\n"
         "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
         "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
+        "/whois &lt;farm_id | @ник | telegram_id&gt; — кто привязал ферму\n"
+        "/unlink &lt;farm_id&gt; — снять привязку фермы (с подтверждением)\n"
+        "/bind_notify on|off — уведомления в личку о каждой новой привязке фермы\n"
         "/admin — эта справка"
+    )
+
+
+def _farmer_card(farmer) -> str:
+    """Карточка привязки для /whois и /unlink."""
+    tg = f"@{esc(farmer['telegram_username'])}" if farmer["telegram_username"] else "без ника"
+    created = farmer["created_at"].strftime("%Y-%m-%d %H:%M UTC") if farmer["created_at"] else "—"
+    return (
+        f"🌾 Ферма <b>#{farmer['farm_id']}</b> ({esc(farmer['game_username'], empty='без ника')})\n"
+        f"👤 Telegram: {tg}, id <code>{farmer['telegram_id']}</code>\n"
+        f"📅 Привязана: {created}\n"
+        f"🎟 Отслеживание тикетов: {'вкл' if farmer['tickets_tracked'] else 'выкл'}"
+    )
+
+
+async def _find_farmer(query: str):
+    """@ник -> по нику в Telegram; число -> сначала farm_id, затем telegram_id."""
+    query = query.strip()
+    if query.startswith("@"):
+        return await db.get_farmer_by_telegram_username(query[1:])
+    farm_id = _parse_farm_id(query)
+    if farm_id is None:
+        return None
+    return await db.get_farmer_by_farm(farm_id) or await db.get_farmer_by_telegram(farm_id)
+
+
+@router.message(Command("whois"))
+async def cmd_whois(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /whois &lt;farm_id | @ник | telegram_id&gt;")
+        return
+
+    farmer = await _find_farmer(args[1])
+    if farmer is None:
+        await message.answer("Привязка не найдена.")
+        return
+    await message.answer(_farmer_card(farmer))
+
+
+@router.message(Command("unlink"))
+async def cmd_unlink(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=1)
+    farm_id = _parse_farm_id(args[1]) if len(args) > 1 else None
+    if farm_id is None:
+        await message.answer("Использование: /unlink &lt;farm_id&gt;")
+        return
+
+    farmer = await db.get_farmer_by_farm(farm_id)
+    if farmer is None:
+        await message.answer(f"Ферма <b>#{farm_id}</b> ни к кому не привязана.")
+        return
+
+    await message.answer(
+        f"{_farmer_card(farmer)}\n\nСнять привязку?",
+        reply_markup=unlink_keyboard(farm_id),
+    )
+
+
+@router.callback_query(F.data.startswith("unlink:"))
+async def confirm_unlink(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+
+    _, raw_farm_id, mode = callback.data.split(":", 2)
+    farm_id = _parse_farm_id(raw_farm_id)
+    if farm_id is None:
+        await callback.answer()
+        return
+
+    farmer = await db.delete_farmer_by_farm(farm_id)
+    if farmer is None:
+        await callback.message.edit_text(f"Ферма <b>#{farm_id}</b> уже не привязана.")
+        await callback.answer()
+        return
+
+    log.info(
+        "Админ %s снял привязку фермы %s (telegram_id %s)",
+        callback.from_user.id, farm_id, farmer["telegram_id"],
+    )
+
+    note = ""
+    if mode == "notify":
+        try:
+            await callback.bot.send_message(
+                farmer["telegram_id"],
+                f"ℹ️ Привязка фермы <b>#{farm_id}</b> к твоему аккаунту снята администратором.\n"
+                f"Вопросы — в <a href=\"{COMMUNITY_CHAT_URL}\">чат сообщества</a>.",
+            )
+            note = "\nПользователь уведомлён."
+        except Exception:
+            log.warning("Не удалось уведомить %s об отвязке", farmer["telegram_id"], exc_info=True)
+            note = "\n⚠️ Уведомить пользователя не удалось (бот заблокирован?)."
+
+    await callback.message.edit_text(
+        f"✅ Привязка фермы <b>#{farm_id}</b> снята.{note}\n"
+        f"Теперь её может привязать настоящий владелец."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "unlink_cancel")
+async def cancel_unlink(callback: CallbackQuery):
+    await callback.message.edit_text("Окей, привязку не трогаю.")
+    await callback.answer()
+
+
+@router.message(Command("bind_notify"))
+async def bind_notify_toggle(message: Message):
+    """Вкл/выкл уведомления админу о каждой новой привязке фермы."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=1)
+    arg = args[1].strip().lower() if len(args) > 1 else ""
+
+    if arg not in ("on", "off"):
+        enabled = await bot_settings.get_bool(BIND_NOTIFY_KEY, default=True)
+        await message.answer(
+            f"Уведомления о новых привязках ферм: "
+            f"<b>{'включены' if enabled else 'выключены'}</b>.\n"
+            f"Переключить: /bind_notify on|off"
+        )
+        return
+
+    await bot_settings.set_bool(BIND_NOTIFY_KEY, arg == "on")
+    await message.answer(
+        f"{'✅ Включил' if arg == 'on' else '🔕 Выключил'} уведомления о новых привязках ферм."
     )
 
 
@@ -397,5 +653,5 @@ async def handle_unknown(message: Message):
     await message.answer(
         "🤖 Я пока не умею общаться с фермерами и давать советы — "
         "но в нашем чате тебе точно помогут!\n\n"
-        "👉 <a href=\"https://t.me/+hSm5ZeGb7ohhYzhi\">Присоединиться к чату</a>"
+        f"👉 <a href=\"{COMMUNITY_CHAT_URL}\">Присоединиться к чату</a>"
     )

@@ -1,16 +1,78 @@
 """Кэширующий слой между goblin-api и внешним SFL community API."""
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import httpx
 
 from shared import config
+from shared.throttle import RateLimiter
 
 log = logging.getLogger(__name__)
 
 STALE_AFTER = timedelta(hours=6)
 SFL_TIMEOUT = 8.0
+
+MAX_FARM_ID = 2**63 - 1  # farm_id хранится как BIGINT
+
+# Лок is_refreshing старше этого считается протухшим (процесс умер посреди
+# обновления) — иначе ферма зависала бы без обновлений навсегда.
+REFRESH_LOCK_TIMEOUT_SEC = 120
+
+# Все запросы к SFL из этого процесса идут через общий троттл: эндпоинты
+# goblin-api публичные, без него /farms?ids=... с тысячами id выжигал бы
+# rate limit SFL API-ключа, общего с ботом.
+sfl_limiter = RateLimiter(
+    rate_per_sec=config.API_RATE_PER_SEC,
+    concurrency=config.API_CONCURRENCY,
+)
+
+# Сколько фоновых refresh может стоять в очереди одновременно — сверх этого
+# новые просто не ставятся (данные отдадутся из кэша, обновятся позже).
+MAX_PENDING_REFRESHES = 20
+_pending_refreshes = 0
+
+# Отрицательный кэш: фермы, на которые SFL ответил 404, не запрашиваем
+# повторно в течение NOT_FOUND_TTL_SEC (иначе перебор несуществующих id —
+# бесплатный способ жечь наш лимит).
+NOT_FOUND_TTL_SEC = 3600
+_NOT_FOUND_MAX_SIZE = 10_000
+_not_found_until: dict[int, float] = {}
+
+
+def is_known_missing(farm_id: int) -> bool:
+    until = _not_found_until.get(farm_id)
+    if until is None:
+        return False
+    if until < time.monotonic():
+        del _not_found_until[farm_id]
+        return False
+    return True
+
+
+def _mark_missing(farm_id: int) -> None:
+    if len(_not_found_until) >= _NOT_FOUND_MAX_SIZE:
+        _not_found_until.clear()
+    _not_found_until[farm_id] = time.monotonic() + NOT_FOUND_TTL_SEC
+
+
+def reserve_refresh_slot() -> bool:
+    """Занимает место в очереди фоновых refresh; False — очередь полна."""
+    global _pending_refreshes
+    if _pending_refreshes >= MAX_PENDING_REFRESHES:
+        return False
+    _pending_refreshes += 1
+    return True
+
+
+async def refresh_farm_reserved(farm_id: int, pool: asyncpg.Pool) -> None:
+    """refresh_farm для слота, занятого reserve_refresh_slot() — слот освобождается всегда."""
+    global _pending_refreshes
+    try:
+        await refresh_farm(farm_id, pool)
+    finally:
+        _pending_refreshes -= 1
 
 
 def is_stale(updated_at: datetime) -> bool:
@@ -59,19 +121,6 @@ async def touch_last_requested(pool: asyncpg.Pool, farm_id: int) -> None:
     )
 
 
-async def ensure_placeholder(pool: asyncpg.Pool, farm_id: int) -> None:
-    """Создаёт пустую отслеживаемую запись, если её ещё нет (не трогает существующую)."""
-    await pool.execute(
-        """
-        INSERT INTO farm_cache (farm_id, data, tracked, first_seen, last_requested_at)
-        VALUES ($1, $2, true, now(), now())
-        ON CONFLICT (farm_id) DO NOTHING
-        """,
-        farm_id,
-        None,
-    )
-
-
 async def upsert_farm_data(pool: asyncpg.Pool, farm_id: int, data: dict) -> None:
     """
     Безусловно записывает свежие данные фермы (создаёт строку, если её ещё
@@ -99,7 +148,7 @@ def _api_headers() -> dict:
 async def _fetch_from_sfl(farm_id: int) -> dict:
     url = f"{config.SFL_API_BASE}/community/farms/{farm_id}"
 
-    async with httpx.AsyncClient(timeout=SFL_TIMEOUT) as client:
+    async with sfl_limiter, httpx.AsyncClient(timeout=SFL_TIMEOUT) as client:
         resp = await client.get(url, headers=_api_headers())
         resp.raise_for_status()
         return resp.json()
@@ -126,7 +175,7 @@ async def _fetch_batch_from_sfl(farm_ids: list[int]) -> tuple[dict[int, dict], l
 
     url = f"{config.SFL_API_BASE}/community/getFarms"
 
-    async with httpx.AsyncClient(timeout=SFL_TIMEOUT) as client:
+    async with sfl_limiter, httpx.AsyncClient(timeout=SFL_TIMEOUT) as client:
         resp = await client.post(url, json={"ids": farm_ids}, headers=_api_headers())
         resp.raise_for_status()
         data = resp.json()
@@ -142,16 +191,25 @@ async def _fetch_batch_from_sfl(farm_ids: list[int]) -> tuple[dict[int, dict], l
 async def refresh_farm(farm_id: int, pool: asyncpg.Pool) -> None:
     """
     Обновляет кэш одной фермы из внешнего SFL API.
-    Не дублирует параллельные обновления одной и той же фермы.
-    При ошибке внешнего API старые данные в `data` не трогает.
+    Не дублирует параллельные обновления одной и той же фермы (лок
+    is_refreshing протухает через REFRESH_LOCK_TIMEOUT_SEC).
+    При ошибке внешнего API старые данные в `data` не трогает, а пустую
+    строку, созданную только ради лока, удаляет — чтобы перебор
+    несуществующих id не засорял farm_cache.
     """
+    if is_known_missing(farm_id):
+        return
+
     claimed = await pool.fetchval(
-        """
-        INSERT INTO farm_cache (farm_id, data, is_refreshing, tracked, first_seen, last_requested_at)
-        VALUES ($1, $2, true, true, now(), now())
+        f"""
+        INSERT INTO farm_cache
+            (farm_id, data, is_refreshing, refresh_started_at, tracked, first_seen, last_requested_at)
+        VALUES ($1, $2, true, now(), true, now(), now())
         ON CONFLICT (farm_id) DO UPDATE
-            SET is_refreshing = true
+            SET is_refreshing = true, refresh_started_at = now()
             WHERE farm_cache.is_refreshing = false
+               OR farm_cache.refresh_started_at IS NULL
+               OR farm_cache.refresh_started_at < now() - interval '{REFRESH_LOCK_TIMEOUT_SEC} seconds'
         RETURNING farm_id
         """,
         farm_id,
@@ -163,8 +221,16 @@ async def refresh_farm(farm_id: int, pool: asyncpg.Pool) -> None:
 
     try:
         data = await _fetch_from_sfl(farm_id)
-    except Exception:
-        log.warning("Не удалось обновить ферму %s", farm_id, exc_info=True)
+    except Exception as e:
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
+            _mark_missing(farm_id)
+            log.info("Ферма %s не найдена в SFL API", farm_id)
+        else:
+            log.warning("Не удалось обновить ферму %s", farm_id, exc_info=True)
+        await pool.execute(
+            "DELETE FROM farm_cache WHERE farm_id = $1 AND data IS NULL",
+            farm_id,
+        )
         await pool.execute(
             "UPDATE farm_cache SET is_refreshing = false WHERE farm_id = $1",
             farm_id,

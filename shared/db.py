@@ -55,6 +55,24 @@ async def get_farmer_by_farm(farm_id: int) -> asyncpg.Record | None:
     return await pool.fetchrow("SELECT * FROM farmers WHERE farm_id = $1", farm_id)
 
 
+async def get_farmer_by_telegram_username(username: str) -> asyncpg.Record | None:
+    """Поиск по @нику в Telegram (без @, регистронезависимо) — для админского /whois."""
+    pool = await get_pool()
+    return await pool.fetchrow(
+        "SELECT * FROM farmers WHERE lower(telegram_username) = lower($1)", username
+    )
+
+
+async def delete_farmer_by_farm(farm_id: int) -> asyncpg.Record | None:
+    """
+    Снимает привязку фермы (админский /unlink) — после этого ферму может
+    привязать настоящий владелец. Снэпшоты лидерборда тикетов не трогаем:
+    они привязаны к farm_id, а не к человеку. Возвращает удалённую строку.
+    """
+    pool = await get_pool()
+    return await pool.fetchrow("DELETE FROM farmers WHERE farm_id = $1 RETURNING *", farm_id)
+
+
 async def insert_farmer(
     telegram_id: int,
     telegram_username: str | None,

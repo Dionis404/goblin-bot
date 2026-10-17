@@ -16,7 +16,6 @@ import asyncio
 import logging
 import math
 import os
-import sys
 import time
 from collections import defaultdict
 
@@ -39,6 +38,18 @@ Q96 = 2**96
 
 # ---------------------------------------------------------------- GraphQL ---
 
+def _describe_error(e: Exception) -> str:
+    """
+    Описание ошибки без URL: GRAPH_API_KEY зашит прямо в URL, а str() у
+    ошибок httpx включает URL — иначе ключ утекал бы в логи.
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    if isinstance(e, httpx.HTTPError):
+        return type(e).__name__
+    return str(e)
+
+
 def gql(query: str, variables: dict, retries: int = 5) -> dict:
     """POST GraphQL-запрос с ретраями и backoff (The Graph иногда флапает)."""
     for attempt in range(retries):
@@ -52,9 +63,10 @@ def gql(query: str, variables: dict, retries: int = 5) -> dict:
             return data["data"]
         except Exception as e:  # noqa: BLE001 - ретраим любую transient-ошибку
             if attempt == retries - 1:
-                raise
+                # from None — не тащим в traceback исходную ошибку с URL (и ключом)
+                raise RuntimeError(f"The Graph: {_describe_error(e)}") from None
             wait = 2 ** attempt
-            log.warning("запрос упал (%s), ретрай через %sс...", e, wait)
+            log.warning("запрос упал (%s), ретрай через %sс...", _describe_error(e), wait)
             time.sleep(wait)
     raise RuntimeError("unreachable")
 
@@ -98,7 +110,7 @@ query ($pool: String!, $lastId: String!, $page: Int!) {
 def fetch_pool() -> tuple[dict, int]:
     data = gql(POOL_QUERY, {"pool": POOL})
     if data["pool"] is None:
-        sys.exit(f"Пул {POOL} не найден в этом сабграфе — проверь SUBGRAPH_ID.")
+        raise RuntimeError(f"Пул {POOL} не найден в этом сабграфе — проверь SUBGRAPH_ID.")
     return data["pool"], int(data["_meta"]["block"]["number"])
 
 
@@ -162,7 +174,7 @@ def build_leaderboard() -> tuple[list[dict], int, float]:
         usd_of = lambda a0, a1: a0 + a1 / price0_in_1          # noqa: E731
         token_price_usd = 1 / price0_in_1                      # цена token1 (напр. FLOWER)
     else:
-        sys.exit("Ни одна сторона пула не стейбл — нужен внешний прайс-фид.")
+        raise RuntimeError("Ни одна сторона пула не стейбл — нужен внешний прайс-фид.")
 
     log.info("2/3 позиции...")
     positions = fetch_positions()

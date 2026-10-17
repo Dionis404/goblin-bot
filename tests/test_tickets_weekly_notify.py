@@ -27,3 +27,7 @@ def test_format_report_sorted_lines():
     text = format_report(report)
     assert "@ivan — 98 место — 2550 тикетов" in text
     assert "@petro — 610 место — 900 тикетов" in text
+
+
+def test_display_name_escapes_game_username():
+    assert _display_name(None, '<a href="x">Ivan</a>', 1) == '&lt;a href="x"&gt;Ivan&lt;/a&gt;'

@@ -1,8 +1,9 @@
 """FastAPI: данные сообщества для сайта GoblinCodex."""
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Path, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from shared import auctions, db, farm_cache, lp_leaderboard, telegram_posts, tickets_leaderboard
@@ -50,23 +51,47 @@ async def get_farmers():
 
 
 # --- Кэш ферм (farm_cache) ---
+#
+# Эндпоинты публичные и каждый промах кэша — запрос к SFL с нашим API-ключом,
+# поэтому: валидный диапазон farm_id, не больше FARMS_MAX_IDS за запрос,
+# ограниченная очередь фоновых обновлений (farm_cache.reserve_refresh_slot)
+# и отрицательный кэш несуществующих ферм (farm_cache.is_known_missing).
+
+FarmId = Annotated[int, Path(gt=0, le=farm_cache.MAX_FARM_ID)]
+
+FARMS_MAX_IDS = 100
+FORCE_REFRESH_COOLDOWN = timedelta(minutes=5)
+
+
+def _schedule_refresh(background_tasks: BackgroundTasks, farm_id: int, pool) -> bool:
+    """Ставит фоновое обновление, если ферма не числится несуществующей и есть место в очереди."""
+    if farm_cache.is_known_missing(farm_id) or not farm_cache.reserve_refresh_slot():
+        return False
+    background_tasks.add_task(farm_cache.refresh_farm_reserved, farm_id, pool)
+    return True
+
 
 @app.get("/farm/{farm_id}")
-async def get_farm(farm_id: int, background_tasks: BackgroundTasks):
+async def get_farm(farm_id: FarmId, background_tasks: BackgroundTasks):
     pool = await db.get_pool()
     row = await farm_cache.get_farm(pool, farm_id)
 
     if row is None:
         # Первое обращение: единственный раз ждём внешний API синхронно.
-        await farm_cache.ensure_placeholder(pool, farm_id)
-        await farm_cache.refresh_farm(farm_id, pool)
+        if farm_cache.is_known_missing(farm_id):
+            return None
+        if not farm_cache.reserve_refresh_slot():
+            raise HTTPException(status_code=503, detail="Сервис занят, попробуйте позже")
+        await farm_cache.refresh_farm_reserved(farm_id, pool)
         row = await farm_cache.get_farm(pool, farm_id)
+        if row is None:
+            return None
         await farm_cache.touch_last_requested(pool, farm_id)
         return row["data"]
 
     await farm_cache.touch_last_requested(pool, farm_id)
     if farm_cache.is_stale(row["updated_at"]):
-        background_tasks.add_task(farm_cache.refresh_farm, farm_id, pool)
+        _schedule_refresh(background_tasks, farm_id, pool)
     return row["data"]
 
 
@@ -78,6 +103,10 @@ async def get_farms(ids: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="ids должен быть списком чисел через запятую")
     if not farm_ids:
         return {}
+    if len(farm_ids) > FARMS_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"Не больше {FARMS_MAX_IDS} id за запрос")
+    if not all(0 < fid <= farm_cache.MAX_FARM_ID for fid in farm_ids):
+        raise HTTPException(status_code=400, detail="Некорректный id фермы")
 
     pool = await db.get_pool()
     rows = await farm_cache.get_farms(pool, farm_ids)
@@ -85,8 +114,7 @@ async def get_farms(ids: str, background_tasks: BackgroundTasks):
 
     missing_ids = [fid for fid in farm_ids if fid not in by_id]
     for fid in missing_ids:
-        await farm_cache.ensure_placeholder(pool, fid)
-        background_tasks.add_task(farm_cache.refresh_farm, fid, pool)
+        _schedule_refresh(background_tasks, fid, pool)
 
     def serialize(fid: int):
         row = by_id.get(fid)
@@ -101,7 +129,7 @@ async def get_farms(ids: str, background_tasks: BackgroundTasks):
     for fid in farm_ids:
         row = by_id.get(fid)
         if row is not None and farm_cache.is_stale(row["updated_at"]):
-            background_tasks.add_task(farm_cache.refresh_farm, fid, pool)
+            _schedule_refresh(background_tasks, fid, pool)
         result[str(fid)] = serialize(fid)
         await farm_cache.touch_last_requested(pool, fid)
 
@@ -109,17 +137,22 @@ async def get_farms(ids: str, background_tasks: BackgroundTasks):
 
 
 @app.post("/farm/{farm_id}/refresh")
-async def force_refresh_farm(farm_id: int, background_tasks: BackgroundTasks):
+async def force_refresh_farm(farm_id: FarmId, background_tasks: BackgroundTasks):
     pool = await db.get_pool()
-    await farm_cache.ensure_placeholder(pool, farm_id)
-    background_tasks.add_task(farm_cache.refresh_farm, farm_id, pool)
+    row = await farm_cache.get_farm(pool, farm_id)
+    # Свежие данные повторно не тянем: иначе цикл POST-запросов = цикл запросов к SFL
+    if row is not None and row["data"] is not None and \
+            datetime.now(timezone.utc) - row["updated_at"] < FORCE_REFRESH_COOLDOWN:
+        return {"status": "fresh"}
+    if not _schedule_refresh(background_tasks, farm_id, pool):
+        return {"status": "skipped"}
     return {"status": "refreshing"}
 
 
 # --- Посты канала @URGSFL (telegram_posts) ---
 
 @app.get("/api/community/posts/{post_id}/image")
-async def get_post_image(post_id: int):
+async def get_post_image(post_id: Annotated[int, Path(gt=0, le=farm_cache.MAX_FARM_ID)]):
     row = await telegram_posts.get_post_image(post_id)
     if row is None or row["image_data"] is None:
         raise HTTPException(status_code=404, detail="Картинка не найдена")
@@ -197,7 +230,10 @@ async def get_tickets_top500(at: datetime | None = None):
 
 @app.get("/api/auctions")
 async def get_auctions(
-    upcoming: bool = False, history: bool = False, limit: int = 20, item_name: str | None = None
+    upcoming: bool = False,
+    history: bool = False,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    item_name: Annotated[str | None, Query(max_length=100)] = None,
 ):
     if upcoming and history:
         raise HTTPException(status_code=400, detail="upcoming и history взаимоисключающие")

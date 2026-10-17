@@ -13,6 +13,7 @@ from xml.etree import ElementTree
 import httpx
 
 from shared import config
+from shared.text import esc
 
 log = logging.getLogger(__name__)
 
@@ -183,12 +184,34 @@ async def translate_buckets(buckets: dict[str, list[str]]) -> dict[str, list[str
     return _parse_ai_response(raw_text, buckets)
 
 
+_LINK_RE = re.compile(r"(https?://|www\.|t\.me/)\S+", re.IGNORECASE)
+
+
+def _strip_links(line: str) -> str:
+    """
+    Ссылки из пунктов changelog'а вырезаем: заголовок PR (или prompt injection
+    в нём, протащенный через AI-перевод) не должен публиковать в группе
+    произвольную ссылку. Единственная ссылка в сообщении — на сам релиз.
+    """
+    return _LINK_RE.sub("", line).strip()
+
+
 def format_message(name: str, url: str, buckets: dict[str, list[str]]) -> str:
-    """Собирает финальный текст сообщения — эмодзи-заголовки и формат 1-в-1 с n8n."""
+    """
+    Собирает финальный текст сообщения — эмодзи-заголовки и формат 1-в-1 с n8n.
+
+    Сообщение уходит с parse_mode=HTML, а все данные внешние (заголовки PR из
+    GitHub, ответ AI-переводчика) — экранируем, иначе "<Modal>" в заголовке PR
+    ломает отправку, и уведомление застревает в вечном ретрае.
+    """
+    name = esc(name, empty="")
+    url = esc(url, empty="")
+
     def section(title: str, lines: list[str]) -> str | None:
+        lines = [cleaned for line in lines if (cleaned := _strip_links(str(line)))]
         if not lines:
             return None
-        body = "\n".join(f"• {line}" for line in lines)
+        body = "\n".join(f"• {esc(line, empty='')}" for line in lines)
         return f"{title}\n{body}"
 
     sections = [

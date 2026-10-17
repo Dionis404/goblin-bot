@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from shared import farm_cache
@@ -79,7 +80,7 @@ async def test_refresh_skips_when_already_refreshing():
     now = datetime.now(timezone.utc)
     pool._rows[9] = FakeRecord(
         farm_id=9, data=None, updated_at=now,
-        is_refreshing=True, tracked=True,
+        is_refreshing=True, refresh_started_at=now, tracked=True,
         first_seen=now, last_requested_at=now,
     )
 
@@ -88,6 +89,77 @@ async def test_refresh_skips_when_already_refreshing():
         await farm_cache.refresh_farm(9, pool)
 
     fetch_mock.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _reset_not_found_cache():
+    farm_cache._not_found_until.clear()
+    yield
+    farm_cache._not_found_until.clear()
+
+
+@pytest.mark.asyncio
+async def test_stale_refresh_lock_is_taken_over():
+    """Лок, зависший после рестарта процесса, протухает и не блокирует ферму навсегда."""
+    pool = FakePool()
+    long_ago = datetime.now(timezone.utc) - timedelta(seconds=farm_cache.REFRESH_LOCK_TIMEOUT_SEC + 60)
+    pool._rows[11] = FakeRecord(
+        farm_id=11, data={"old": True}, updated_at=long_ago,
+        is_refreshing=True, refresh_started_at=long_ago, tracked=True,
+        first_seen=long_ago, last_requested_at=long_ago,
+    )
+
+    with patch("shared.farm_cache._fetch_from_sfl", AsyncMock(return_value=SFL_PAYLOAD)):
+        await farm_cache.refresh_farm(11, pool)
+
+    row = await farm_cache.get_farm(pool, 11)
+    assert row["data"] == SFL_PAYLOAD
+    assert row["is_refreshing"] is False
+
+
+@pytest.mark.asyncio
+async def test_failed_first_refresh_leaves_no_placeholder():
+    """Ошибка SFL при первом запросе не оставляет пустую строку в farm_cache."""
+    pool = FakePool()
+
+    with patch("shared.farm_cache._fetch_from_sfl", AsyncMock(side_effect=TimeoutError("boom"))):
+        await farm_cache.refresh_farm(555, pool)
+
+    assert await farm_cache.get_farm(pool, 555) is None
+
+
+@pytest.mark.asyncio
+async def test_not_found_farm_is_cached_and_not_requested_again():
+    """404 от SFL попадает в отрицательный кэш — повторный refresh не ходит в API."""
+    pool = FakePool()
+    request = httpx.Request("GET", "https://example.com")
+    not_found = httpx.HTTPStatusError(
+        "404", request=request, response=httpx.Response(404, request=request)
+    )
+    fetch_mock = AsyncMock(side_effect=not_found)
+
+    with patch("shared.farm_cache._fetch_from_sfl", fetch_mock):
+        await farm_cache.refresh_farm(777, pool)
+        await farm_cache.refresh_farm(777, pool)
+
+    assert fetch_mock.await_count == 1
+    assert farm_cache.is_known_missing(777)
+    assert await farm_cache.get_farm(pool, 777) is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_slots_are_limited_and_released():
+    pool = FakePool()
+    reserved = 0
+    while farm_cache.reserve_refresh_slot():
+        reserved += 1
+    try:
+        assert reserved == farm_cache.MAX_PENDING_REFRESHES
+        with patch("shared.farm_cache._fetch_from_sfl", AsyncMock(return_value=SFL_PAYLOAD)):
+            await farm_cache.refresh_farm_reserved(1, pool)
+        assert farm_cache.reserve_refresh_slot()  # слот освободился
+    finally:
+        farm_cache._pending_refreshes = 0
 
 
 @pytest.mark.asyncio

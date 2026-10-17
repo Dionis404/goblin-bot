@@ -26,6 +26,8 @@ async def list_past(
     С item_name — история конкретного предмета (регистронезависимо, точное совпадение).
     """
     if item_name is not None:
+        # ILIKE без экранирования превращал "%"/"_" из запроса в wildcard'ы
+        item_name = item_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return await pool.fetch(
             """
             SELECT auction_id, item_name, item_type, supply,

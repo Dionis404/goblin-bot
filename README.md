@@ -11,6 +11,8 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 - `/refresh_farms` — админская команда, ручное обновление xp/balance/coins/ника всех фермеров сообщества (`farmers` + `farm_cache`)
 - `/subscriber_notify on|off` — админская команда, уведомления в личку о подписке/отписке от канала `@URGSFL`
 - `/tickets_weekly_notify on|off` — админская команда, вкл/выкл еженедельную рассылку отчёта по лидерборду тикетов в группу
+- `/whois <farm_id | @ник | telegram_id>`, `/unlink <farm_id>` — админские команды: кто привязал ферму / снять привязку (с подтверждением, опционально с уведомлением пользователя). Владение фермой при привязке не проверяется — если ферма уже занята, бот показывает кнопку «🚩 Это моя ферма — сообщить админу»: админу сразу приходит карточка привязки с кнопками отвязки (жалоба — не чаще раза в 10 минут от человека)
+- `/bind_notify on|off` — админская команда, уведомления в личку о каждой новой привязке фермы (по умолчанию включены)
 - `/admin` — админская команда, справка со списком всех админских команд (в меню "☰" бота они не светятся)
 - Зеркалирует посты канала [@URGSFL](https://t.me/URGSFL) в таблицу `telegram_posts` (polling, без вебхука на сайте)
 - Считает подписчиков `@URGSFL` каждые 15 минут → `telegram_stats`
@@ -24,7 +26,7 @@ Telegram-бот сообщества [GoblinCodex](https://goblincodex.fun) — 
 
 **API для сайта (`goblin-api`, доступен только внутри docker-сети `shared-net`)**
 - `GET /community/farmers` — список привязанных фермеров
-- `GET /farm/{farm_id}`, `GET /farms?ids=`, `POST /farm/{farm_id}/refresh` — кэш данных фермы (`farm_cache`) с фоновым обновлением по TTL
+- `GET /farm/{farm_id}`, `GET /farms?ids=` (не больше 100 id), `POST /farm/{farm_id}/refresh` (не чаще раза в 5 минут на ферму) — кэш данных фермы (`farm_cache`) с фоновым обновлением по TTL; запросы к SFL идут через общий троттл и ограниченную очередь, несуществующие фермы на час попадают в отрицательный кэш
 - `GET /lp/leaderboard` — топ-500 LP-провайдеров пула FLOWER/USDC
 - `GET /api/tickets/top500` — снэпшот топ-500 лидерборда тикетов, с историческим срезом через `?at=`; подробности — [docs/tickets-leaderboard-api.md](docs/tickets-leaderboard-api.md)
 - `GET /api/auctions?upcoming=true` / `?history=true&limit=&item_name=` — список предстоящих/прошедших аукционов (с фильтром по предмету для history), `GET /api/auctions/{auction_id}/results` — результаты конкретного аукциона, включая item_name/item_type и частичный leaderboard (read-only витрина, пишет отдельный сервис `auctioneer-bot`; полной истории ставок нет — Community API отдаёт только частичный финальный снимок)
@@ -52,7 +54,7 @@ goblin-bot/
 
 ## Локальный запуск
 
-1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `011…`).
+1. Применить миграции к БД `sfl` (по порядку, `migrations/001…` → `012…`).
 2. `cp .env.example .env` → заполнить токены, ключи, пароль БД (см. комментарии в файле).
 3. `pip install -r requirements.txt`
 4. `python -m bot.main` (или `docker compose up --build`)

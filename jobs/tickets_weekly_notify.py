@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from aiogram import Bot
 
 from shared import bot_settings, config, db, tickets_leaderboard
+from shared.text import esc, split_message
 
 log = logging.getLogger(__name__)
 
@@ -23,10 +24,11 @@ SETTING_KEY = "tickets_weekly_notify_enabled"
 
 
 def _display_name(telegram_username: str | None, game_username: str | None, farm_id: int) -> str:
+    """Имя для отчёта — уже экранированное: ник из игры приходит из SFL API как есть."""
     if telegram_username:
-        return f"@{telegram_username}"
+        return f"@{esc(telegram_username)}"
     if game_username:
-        return game_username
+        return esc(game_username)
     return f"Ферма #{farm_id}"
 
 
@@ -77,7 +79,9 @@ async def run_tickets_weekly_notify(bot: Bot) -> dict:
     report = await build_weekly_report()
     text = format_report(report)
 
-    await bot.send_message(config.TICKETS_NOTIFY_CHAT_ID, text)
+    # Много tracked-фермеров -> отчёт может не влезть в лимит одного сообщения
+    for chunk in split_message(text):
+        await bot.send_message(config.TICKETS_NOTIFY_CHAT_ID, chunk)
     log.info("Еженедельное уведомление о лидерборде тикетов отправлено (%s фермеров в отчёте)",
               len(report))
     return {"sent": True, "count": len(report)}

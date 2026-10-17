@@ -10,6 +10,7 @@ from aiogram import F, Router
 from aiogram.types import ChatMemberUpdated
 
 from shared import bot_settings, config
+from shared.text import esc
 
 router = Router()
 log = logging.getLogger(__name__)
@@ -24,10 +25,11 @@ UNSUBSCRIBED_STATUSES = {"left", "kicked"}
 
 
 def _display_name(update: ChatMemberUpdated) -> str:
+    """Уже экранировано: в имени Telegram может быть что угодно, включая HTML."""
     user = update.new_chat_member.user
     if user.username:
-        return f"@{user.username}"
-    return user.full_name
+        return f"@{esc(user.username)}"
+    return esc(user.full_name)
 
 
 @router.chat_member()
