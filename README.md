@@ -55,7 +55,7 @@ goblin-bot/
 
 ## Локальный запуск
 
-1. Применить миграции к БД `sfl`: `python -m shared.migrate` (применяет только новые, учёт в таблице `schema_migrations`). На сервере это делает одноразовый сервис `migrate` в `docker-compose.yml` — бот и API стартуют только после его успешного завершения, руками миграции применять не нужно.
+1. Применить миграции к БД `sfl`: `python -m shared.migrate` (применяет только новые, учёт в таблице `goblin_bot_migrations` — не `schema_migrations`, она в общей БД занята другим сервисом). На сервере это делает одноразовый сервис `migrate` в `docker-compose.yml` — бот и API стартуют только после его успешного завершения, руками миграции применять не нужно.
 2. `cp .env.example .env` → заполнить токены, ключи, пароль БД (см. комментарии в файле).
 3. `pip install -r requirements.txt`
 4. `python -m bot.main` (или `docker compose up --build`)

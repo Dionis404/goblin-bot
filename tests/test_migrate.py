@@ -7,7 +7,7 @@ from shared import migrate
 
 
 class FakeConn:
-    """Фейк asyncpg.Connection: помнит schema_migrations и выполненные SQL."""
+    """Фейк asyncpg.Connection: помнит таблицу учёта миграций и выполненные SQL."""
 
     def __init__(self, farmers_exists: bool, fail_on: str | None = None):
         self.farmers_exists = farmers_exists
@@ -22,10 +22,10 @@ class FakeConn:
             self.locked = True
         elif "pg_advisory_unlock" in sql:
             self.locked = False
-        elif sql.startswith("INSERT INTO schema_migrations"):
+        elif sql.startswith(f"INSERT INTO {migrate.MIGRATIONS_TABLE}"):
             target = self._tx_pending if self._tx_pending is not None else self.applied
             target.append(args[0])
-        elif "CREATE TABLE IF NOT EXISTS schema_migrations" in sql:
+        elif f"CREATE TABLE IF NOT EXISTS {migrate.MIGRATIONS_TABLE}" in sql:
             pass
         else:
             if self.fail_on and self.fail_on in sql:
@@ -115,3 +115,9 @@ def test_real_migrations_include_baseline():
     names = [p.name for p in migrate.list_migrations()]
     assert migrate.BASELINE in names
     assert names == sorted(names)
+
+
+def test_migrations_table_does_not_clash_with_other_services():
+    """В общей БД sfl schema_migrations уже занята другим сервисом."""
+    assert migrate.MIGRATIONS_TABLE != "schema_migrations"
+    assert migrate.MIGRATIONS_TABLE in migrate.CREATE_TABLE_SQL
