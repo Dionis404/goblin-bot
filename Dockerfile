@@ -11,6 +11,7 @@ COPY shared/ ./shared/
 COPY bot/ ./bot/
 COPY api/ ./api/
 COPY jobs/ ./jobs/
+COPY migrations/ ./migrations/
 
 # Не root: при RCE в зависимостях у процесса не будет прав root в контейнере
 RUN useradd --system --no-create-home app

@@ -14,6 +14,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommand
 
 from bot.channel import router as channel_router
 from bot.handlers import router
+from bot.join_verify import router as join_verify_router
 from bot.subscriber_notify import router as subscriber_notify_router
 from shared import bot_settings, config, db, telegram_stats, tickets_leaderboard
 
@@ -24,6 +25,7 @@ TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные н
 TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот топ-500 + мест отслеживаемых ферм
 LP_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой пересбор LP-лидерборда пула FLOWER/USDC
 DAILY_REFRESH_INTERVAL_SEC = 86400  # раз в сутки — батч-прогрев farm_cache подписанных ферм
+JOIN_VERIFY_CHECK_INTERVAL_SEC = 300  # напоминания/таймауты заявок в чат
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 WEEKLY_NOTIFY_WEEKDAY = 0  # понедельник (datetime.weekday(): 0 = Monday)
@@ -118,6 +120,22 @@ async def daily_refresh_loop() -> None:
         await asyncio.sleep(DAILY_REFRESH_INTERVAL_SEC)
 
 
+async def join_verify_loop(bot: Bot) -> None:
+    """Напоминания и 24-часовой таймаут заявок на вступление в чат (bot/join_verify.py)."""
+    if config.JOIN_VERIFY_CHAT_ID is None:
+        log.info("JOIN_VERIFY_CHAT_ID не задан — проверка вступающих в чат выключена")
+        return
+
+    from bot.join_verify import process_timeouts
+
+    while True:
+        try:
+            await process_timeouts(bot)
+        except Exception:
+            log.exception("Ошибка обработки таймаутов заявок в чат")
+        await asyncio.sleep(JOIN_VERIFY_CHECK_INTERVAL_SEC)
+
+
 async def tickets_weekly_notify_loop(bot: Bot) -> None:
     """
     Раз в неделю (ночь с ВС на ПН, 03:00 МСК) шлёт отчёт по местам в группу.
@@ -201,6 +219,7 @@ async def main():
     dp.include_router(router)
     dp.include_router(channel_router)
     dp.include_router(subscriber_notify_router)
+    dp.include_router(join_verify_router)
 
     # Список команд для меню "☰" в Telegram — иначе игроки не узнают про /tracking_lb.
     # Старые команды могли быть заданы с другим scope (например, AllPrivateChats) —
@@ -224,13 +243,18 @@ async def main():
     lp_leaderboard_task = asyncio.create_task(lp_leaderboard_loop())
     daily_refresh_task = asyncio.create_task(daily_refresh_loop())
     chapter_reset_task = asyncio.create_task(tickets_excluded_reset_loop())
+    join_verify_task = asyncio.create_task(join_verify_loop(bot))
 
     log.info("Бот запущен, начинаю polling…")
     try:
         await dp.start_polling(
-            bot, allowed_updates=["message", "callback_query", "channel_post", "chat_member"]
+            bot,
+            allowed_updates=[
+                "message", "callback_query", "channel_post", "chat_member", "chat_join_request",
+            ],
         )
     finally:
+        join_verify_task.cancel()
         stats_task.cancel()
         tickets_task.cancel()
         weekly_notify_task.cancel()

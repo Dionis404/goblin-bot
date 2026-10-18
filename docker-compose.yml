@@ -1,9 +1,28 @@
 services:
+  # Одноразовый: применяет новые миграции из migrations/ и завершается.
+  # Бот и API стартуют только после его успешного завершения.
+  migrate:
+    image: ghcr.io/dionis404/goblin-bot:latest
+    container_name: goblin-migrate
+    command: python -m shared.migrate
+    restart: "no"
+    environment:
+      DB_HOST: ${DB_HOST:-postgres-main}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-sfl}
+      DB_USER: ${DB_USER:-goblin}
+      DB_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - shared-net
+
   goblin-bot:
     image: ghcr.io/dionis404/goblin-bot:latest
     container_name: goblin-bot
     command: python -m bot.main
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
@@ -34,6 +53,9 @@ services:
       AI_TRANSLATE_API_KEY: ${AI_TRANSLATE_API_KEY:-}
       AI_TRANSLATE_MODEL: ${AI_TRANSLATE_MODEL:-google/gemini-2.5-flash}
       ROUTERAI_API_KEY: ${ROUTERAI_API_KEY:-}
+      JOIN_VERIFY_CHAT_ID: ${JOIN_VERIFY_CHAT_ID:-}
+      CHAT_RULES_URL: ${CHAT_RULES_URL:-}
+      REQUIRED_CHANNEL: ${REQUIRED_CHANNEL:-}
     networks:
       - shared-net
     dns:
@@ -45,6 +67,9 @@ services:
     container_name: goblin-api
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8000:8000"
     environment:

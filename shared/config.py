@@ -89,3 +89,18 @@ AI_TRANSLATE_API_KEY = (
     or None
 )
 AI_TRANSLATE_MODEL = os.environ.get("AI_TRANSLATE_MODEL", "google/gemini-2.5-flash")
+
+# --- Проверка вступающих в чат (bot/join_verify.py) ---
+# Чат, заявки на вступление в который бот обрабатывает: шлёт правила и
+# эмодзи-капчу, после правильного ответа одобряет. Пусто = функция выключена,
+# заявки ждут ручного решения админа, как раньше.
+JOIN_VERIFY_CHAT_ID = int(os.environ["JOIN_VERIFY_CHAT_ID"]) if os.environ.get("JOIN_VERIFY_CHAT_ID", "").strip() else None
+# Ссылка на правила чата на сайте
+CHAT_RULES_URL = os.environ.get("CHAT_RULES_URL", "").strip() or None
+# Канал (без @), подписка на который обязательна для вступления. По умолчанию —
+# тот же канал, что зеркалируется в telegram_posts. Бот должен быть его админом,
+# иначе Telegram не отдаёт статус участника. Пусто и без TELEGRAM_POSTS_CHANNEL —
+# проверка подписки выключена.
+REQUIRED_CHANNEL = (
+    os.environ.get("REQUIRED_CHANNEL", "").strip().lstrip("@") or TELEGRAM_POSTS_CHANNEL or None
+)
