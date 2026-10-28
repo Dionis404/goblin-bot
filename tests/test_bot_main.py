@@ -34,3 +34,12 @@ def test_window_stays_same_id_for_rest_of_week():
 def test_window_advances_to_next_monday():
     now = datetime(2026, 9, 7, 3, 0, tzinfo=MOSCOW_TZ)
     assert _current_notify_window(now) == "2026-09-07"
+
+
+def test_httpx_request_urls_are_not_logged():
+    """В URL The Graph зашит GRAPH_API_KEY — httpx не должен писать URL на INFO."""
+    import logging
+
+    import bot.main  # noqa: F401 — настройка логирования при импорте
+
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)

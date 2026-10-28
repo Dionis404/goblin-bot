@@ -2,8 +2,9 @@ services:
   # Одноразовый: применяет новые миграции из migrations/ и завершается.
   # Бот и API стартуют только после его успешного завершения.
   migrate:
+    # Без container_name: одноразовый контейнер остаётся после каждого запуска,
+    # и фиксированное имя Portainer считает конфликтом при обновлении стека
     image: ghcr.io/dionis404/goblin-bot:latest
-    container_name: goblin-migrate
     command: python -m shared.migrate
     restart: "no"
     environment:
