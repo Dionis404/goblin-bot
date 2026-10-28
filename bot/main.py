@@ -19,6 +19,9 @@ from bot.subscriber_notify import router as subscriber_notify_router
 from shared import bot_settings, config, db, telegram_stats, tickets_leaderboard
 
 logging.basicConfig(level=logging.INFO)
+# httpx логирует на INFO полный URL каждого запроса, а у The Graph ключ
+# зашит прямо в URL (jobs/lp_leaderboard.py) — иначе он в каждой строке лога
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("goblin-bot")
 
 TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные не горят, на сайте свой кэш на 10 мин

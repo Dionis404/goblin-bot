@@ -8,6 +8,14 @@ try:
 except ImportError:
     pass
 
+
+def env_flag(name: str, default: bool) -> bool:
+    """Булев флаг из окружения: 1/true/yes/on (регистр не важен); не задан — default."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
 # --- Telegram ---
 # Обязателен для bot/main.py; api/main.py его не требует.
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -39,7 +47,8 @@ FARM_URL_TEMPLATE = os.environ.get(
 # Лимит community API — по IP (~1 запрос / 5 с, при перегрузе 1 / 10 с) и общий
 # для всех сервисов на VPS (бот, goblin-api, sfl-collector). 0.15 = не чаще
 # одного запроса в ~6.7 с из этого процесса.
-API_RATE_PER_SEC = float(os.environ.get("API_RATE_PER_SEC", "0.15"))  # запросов/сек к SFL API
+DEFAULT_API_RATE_PER_SEC = 0.15
+API_RATE_PER_SEC = float(os.environ.get("API_RATE_PER_SEC", DEFAULT_API_RATE_PER_SEC))  # запросов/сек к SFL API
 API_CONCURRENCY = int(os.environ.get("API_CONCURRENCY", "1"))         # одновременных запросов
 USER_COOLDOWN_SEC = float(os.environ.get("USER_COOLDOWN_SEC", "5"))   # пауза между запросами одного юзера
 API_MAX_RETRIES = int(os.environ.get("API_MAX_RETRIES", "3"))         # повторы при 429
@@ -71,9 +80,7 @@ TICKETS_DELAY_BETWEEN_FARMS_SEC = float(os.environ.get("TICKETS_DELAY_BETWEEN_FA
 # Выключать здесь, когда sfl-collector запущен с TICKETS_ENABLED=true —
 # иначе в top500_snapshots будут двойные снимки. Таблицы те же, поэтому
 # еженедельный отчёт и /tracking_lb продолжают работать без изменений.
-TICKETS_LEADERBOARD_ENABLED = os.environ.get(
-    "TICKETS_LEADERBOARD_ENABLED", "true"
-).strip().lower() in {"1", "true", "yes", "on"}
+TICKETS_LEADERBOARD_ENABLED = env_flag("TICKETS_LEADERBOARD_ENABLED", default=True)
 
 # --- Уведомления о новых версиях игры (jobs/game_update_notify.py) ---
 # Чат, куда шлётся сообщение о свежем релизе sunflower-land. Отдельная

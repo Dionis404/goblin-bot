@@ -48,10 +48,14 @@ class UserCooldown:
         иначе — сколько секунд осталось ждать.
         """
         now = time.monotonic()
-        last = self._last.get(user_id, 0.0)
-        remaining = self._seconds - (now - last)
-        if remaining > 0:
-            return remaining
+        last = self._last.get(user_id)
+        # Первый запрос пропускаем всегда. Не "last = 0.0": monotonic() считает
+        # от загрузки машины, и в первые `seconds` после ребута сервера первый
+        # же запрос каждого пользователя считался бы слишком частым.
+        if last is not None:
+            remaining = self._seconds - (now - last)
+            if remaining > 0:
+                return remaining
         self._last[user_id] = now
         return 0.0
 

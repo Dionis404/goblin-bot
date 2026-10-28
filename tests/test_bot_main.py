@@ -1,8 +1,14 @@
-"""Тесты для bot/main.py: расчёт окна еженедельного уведомления о лидерборде тикетов."""
+"""Тесты для bot/main.py: окно еженедельного отчёта, флаг сбора лидерборда, логирование."""
+import asyncio
+import logging
+import sys
+import types
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from bot import main as bot_main
 from bot.main import _current_notify_window
+from shared import config
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
@@ -38,23 +44,20 @@ def test_window_advances_to_next_monday():
 
 # --- Лидерборд тикетов перенесён в sfl-collector ---
 
-import asyncio
-import sys
-import types
-
-from bot import main as bot_main
+def _fake_tickets_job(monkeypatch, run):
+    fake_job = types.ModuleType("jobs.tickets_leaderboard")
+    fake_job.run_tickets_leaderboard = run
+    monkeypatch.setitem(sys.modules, "jobs.tickets_leaderboard", fake_job)
 
 
 def test_tickets_loop_exits_without_api_calls_when_disabled(monkeypatch):
     monkeypatch.setattr(bot_main.config, "TICKETS_LEADERBOARD_ENABLED", False)
     called = []
-    fake_job = types.ModuleType("jobs.tickets_leaderboard")
 
     async def run_tickets_leaderboard():
         called.append(True)
 
-    fake_job.run_tickets_leaderboard = run_tickets_leaderboard
-    monkeypatch.setitem(sys.modules, "jobs.tickets_leaderboard", fake_job)
+    _fake_tickets_job(monkeypatch, run_tickets_leaderboard)
 
     # выключенный цикл должен сразу завершиться, а не висеть в while True
     asyncio.run(asyncio.wait_for(bot_main.tickets_leaderboard_loop(), timeout=1))
@@ -64,14 +67,12 @@ def test_tickets_loop_exits_without_api_calls_when_disabled(monkeypatch):
 def test_tickets_loop_runs_job_when_enabled(monkeypatch):
     monkeypatch.setattr(bot_main.config, "TICKETS_LEADERBOARD_ENABLED", True)
     called = []
-    fake_job = types.ModuleType("jobs.tickets_leaderboard")
 
     async def run_tickets_leaderboard():
         called.append(True)
         raise asyncio.CancelledError  # выходим из бесконечного цикла после первого запуска
 
-    fake_job.run_tickets_leaderboard = run_tickets_leaderboard
-    monkeypatch.setitem(sys.modules, "jobs.tickets_leaderboard", fake_job)
+    _fake_tickets_job(monkeypatch, run_tickets_leaderboard)
 
     try:
         asyncio.run(bot_main.tickets_leaderboard_loop())
@@ -80,16 +81,20 @@ def test_tickets_loop_runs_job_when_enabled(monkeypatch):
     assert called == [True]
 
 
-def test_default_api_rate_respects_community_limit(monkeypatch):
-    import importlib
+def test_default_api_rate_respects_community_limit():
+    # Проверяем дефолт из кода, а не итоговое значение: на него влияет локальный .env
+    assert config.DEFAULT_API_RATE_PER_SEC <= 0.2  # не чаще 1 запроса в 5 с
 
-    from shared import config
 
-    monkeypatch.delenv("API_RATE_PER_SEC", raising=False)
-    monkeypatch.delenv("TICKETS_LEADERBOARD_ENABLED", raising=False)
-    reloaded = importlib.reload(config)
-    try:
-        assert reloaded.API_RATE_PER_SEC <= 0.2   # не чаще 1 запроса в 5 с
-        assert reloaded.TICKETS_LEADERBOARD_ENABLED is True  # локально по умолчанию работает
-    finally:
-        importlib.reload(config)
+def test_env_flag_defaults_and_parsing(monkeypatch):
+    monkeypatch.delenv("SOME_FLAG", raising=False)
+    assert config.env_flag("SOME_FLAG", default=True) is True  # локально без compose — включено
+    monkeypatch.setenv("SOME_FLAG", "false")
+    assert config.env_flag("SOME_FLAG", default=True) is False
+    monkeypatch.setenv("SOME_FLAG", " ON ")
+    assert config.env_flag("SOME_FLAG", default=False) is True
+
+
+def test_httpx_request_urls_are_not_logged():
+    """В URL The Graph зашит GRAPH_API_KEY — httpx не должен писать URL на INFO."""
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)

@@ -81,3 +81,16 @@ def test_force_refresh_skips_fresh_data(client, pool):
 @pytest.mark.parametrize("limit", ["0", "-1", "101"])
 def test_auctions_limit_is_bounded(client, limit):
     assert client.get(f"/api/auctions?history=true&limit={limit}").status_code == 422
+
+
+def test_first_hit_does_not_wait_behind_busy_queue(client, pool):
+    """Очередь к SFL не пуста — первый запрос не ждёт её синхронно, обновление уходит в фон."""
+    farm_cache._pending_refreshes = 1  # кто-то уже ждёт свой запрос к SFL
+    fetch = AsyncMock(return_value={"id": 9, "farm": {}})
+    with patch("shared.farm_cache._fetch_from_sfl", fetch):
+        resp = client.get("/farm/9")
+
+    assert resp.status_code == 200
+    assert resp.json() is None  # данных пока нет, но и ожидания тоже
+    # TestClient выполняет фоновые задачи после ответа — ферма обновилась
+    assert pool._rows[9]["data"] == {"id": 9, "farm": {}}

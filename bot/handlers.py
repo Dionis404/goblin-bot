@@ -350,31 +350,46 @@ async def backfill_post_images(message: Message):
 
 @router.message(Command("tickets_check"))
 async def tickets_check(message: Message):
-    """Ручной прогон почасового сбора лидерборда тикетов + сводка по tracked-фермерам."""
+    """
+    Сводка по tracked-фермерам из последних снэпшотов лидерборда тикетов.
+    Сам сбор запускает только если он не передан в sfl-collector
+    (TICKETS_LEADERBOARD_ENABLED) — иначе ручной прогон дал бы двойные
+    снимки в top500_snapshots и лишние запросы к SFL в обход общего лимита.
+    """
     if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
         return
 
-    status_msg = await message.answer(
-        "🔄 Проверяю лидерборд тикетов (топ-500 + отслеживаемые фермы)…"
-    )
-    try:
-        from jobs.tickets_leaderboard import run_tickets_leaderboard
-        result = await run_tickets_leaderboard()
-    except Exception:
-        log.exception("Ошибка ручной проверки лидерборда тикетов")
-        await status_msg.edit_text("⚠️ Не удалось выполнить проверку, смотри логи.")
-        return
+    if config.TICKETS_LEADERBOARD_ENABLED:
+        status_msg = await message.answer(
+            "🔄 Проверяю лидерборд тикетов (топ-500 + отслеживаемые фермы)…"
+        )
+        try:
+            from jobs.tickets_leaderboard import run_tickets_leaderboard
+            result = await run_tickets_leaderboard()
+        except Exception:
+            log.exception("Ошибка ручной проверки лидерборда тикетов")
+            await status_msg.edit_text("⚠️ Не удалось выполнить проверку, смотри логи.")
+            return
+        header = (
+            f"✅ Прогон завершён: сохранено <b>{result['saved']}</b>, "
+            f"пропущено <b>{result['skipped']}</b>, "
+            f"из топ-500 без запроса <b>{result['from_top500']}</b>, "
+            f"вновь исключено <b>{result['excluded']}</b> "
+            f"(всего <b>{result['total']}</b> tracked).\n"
+        )
+    else:
+        status_msg = await message.answer("🔄 Собираю сводку по снэпшотам…")
+        header = (
+            "ℹ️ Лидерборд тикетов собирает <b>sfl-collector</b> — здесь только сводка "
+            "по его последним снэпшотам, без нового прогона.\n"
+        )
 
     pool = await db.get_pool()
     now = datetime.now(timezone.utc)
 
     farmers = await tickets_leaderboard.get_tracked_farmers(pool)
     lines = [
-        f"✅ Прогон завершён: сохранено <b>{result['saved']}</b>, "
-        f"пропущено <b>{result['skipped']}</b>, "
-        f"из топ-500 без запроса <b>{result['from_top500']}</b>, "
-        f"вновь исключено <b>{result['excluded']}</b> "
-        f"(всего <b>{result['total']}</b> tracked).\n",
+        header,
         f"🎟 <b>Свежие снэпшоты ({len(farmers)} tracked-ферм):</b>",
     ]
     for farmer in farmers:
@@ -503,7 +518,8 @@ async def cmd_admin(message: Message):
         "/refresh_lp — ручной пересбор LP-лидерборда пула FLOWER/USDC\n"
         "/refresh_farms — ручное обновление xp/balance/coins/ника всех фермеров сообщества\n"
         "/backfill_post_images — восстановление картинок старых постов канала\n"
-        "/tickets_check — ручной прогон почасового сбора лидерборда тикетов + сводка по tracked-фермам\n"
+        "/tickets_check — сводка по tracked-фермам из последних снэпшотов лидерборда тикетов "
+        "(прогон сбора — только если он не передан в sfl-collector)\n"
         "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
         "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
         "/whois &lt;farm_id | @ник | telegram_id&gt; — кто привязал ферму\n"

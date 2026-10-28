@@ -241,6 +241,8 @@ async def run_lp_leaderboard() -> dict:
 
 async def _main() -> None:
     logging.basicConfig(level=logging.INFO)
+    # Ключ The Graph в URL — не даём httpx писать URL запросов в лог
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         await run_lp_leaderboard()
     finally:

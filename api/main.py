@@ -80,6 +80,12 @@ async def get_farm(farm_id: FarmId, background_tasks: BackgroundTasks):
         # Первое обращение: единственный раз ждём внешний API синхронно.
         if farm_cache.is_known_missing(farm_id):
             return None
+        if farm_cache.pending_refreshes() > 0:
+            # Под лимитом SFL (~1 запрос / 6.7 с) ожидание за очередью легко
+            # превысит таймаут прокси сайта — обновляем в фоне, данные будут
+            # на следующем запросе.
+            _schedule_refresh(background_tasks, farm_id, pool)
+            return None
         if not farm_cache.reserve_refresh_slot():
             raise HTTPException(status_code=503, detail="Сервис занят, попробуйте позже")
         await farm_cache.refresh_farm_reserved(farm_id, pool)
