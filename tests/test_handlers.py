@@ -130,3 +130,31 @@ async def test_dispute_on_already_freed_farm_does_not_bother_admin(monkeypatch, 
 
     callback.bot.send_message.assert_not_called()
     assert "свободна" in callback.message.edit_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled, expect_run", [(False, False), (True, True)])
+async def test_tickets_check_runs_collection_only_when_enabled(monkeypatch, enabled, expect_run):
+    """При сборе в sfl-collector ручной /tickets_check не должен дублировать снимки."""
+    import sys
+    import types
+
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    monkeypatch.setattr(handlers.config, "TICKETS_LEADERBOARD_ENABLED", enabled)
+    run = AsyncMock(return_value={"saved": 0, "skipped": 0, "from_top500": 0, "excluded": 0, "total": 0})
+    fake_job = types.ModuleType("jobs.tickets_leaderboard")
+    fake_job.run_tickets_leaderboard = run
+    monkeypatch.setitem(sys.modules, "jobs.tickets_leaderboard", fake_job)
+
+    message = MagicMock()
+    message.from_user.id = ADMIN_ID
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    message.answer = AsyncMock(return_value=status_msg)
+
+    with patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.get_tracked_farmers", AsyncMock(return_value=[])):
+        await handlers.tickets_check(message)
+
+    assert run.await_count == (1 if expect_run else 0)
+    assert ("sfl-collector" in status_msg.edit_text.await_args.args[0]) is not expect_run
