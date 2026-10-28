@@ -78,13 +78,35 @@ async def test_join_request_sends_rules_and_captcha(jr):
 
     await join_verify.handle_join_request(request, bot)
 
-    text = bot.send_message.await_args.args[1]
+    to_user, to_admin = bot.send_message.await_args_list
+    text = to_user.args[1]
+    assert to_user.args[0] == USER_ID
     assert "https://goblincodex.fun/rules" in text
     assert "URG &lt;SFL&gt;" in text
     correct = jr["upsert_pending"].await_args.args[-1]
-    buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard[0]
+    buttons = to_user.kwargs["reply_markup"].inline_keyboard[0]
     assert f"join:{CHAT_ID}:{correct}" in [b.callback_data for b in buttons]
     jr["set_message_id"].assert_awaited_once()
+    # админ узнаёт о каждой новой заявке
+    assert to_admin.args[0] == ADMIN_ID
+    assert "Новая заявка" in to_admin.args[1] and "@newbie" in to_admin.args[1]
+
+
+@pytest.mark.asyncio
+async def test_join_request_to_unverified_chat_notifies_admin(jr, monkeypatch):
+    monkeypatch.setattr(join_verify.config, "JOIN_VERIFY_CHAT_ID", None)
+    request = MagicMock()
+    request.chat.id, request.chat.title = -100999, "Другой чат"
+    request.from_user.id, request.from_user.username = USER_ID, "newbie"
+    bot = AsyncMock()
+
+    await join_verify.handle_unverified_join_request(request, bot)
+
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.args[0] == ADMIN_ID
+    text = bot.send_message.await_args.args[1]
+    assert "-100999" in text and "не задан" in text
+    jr["upsert_pending"].assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -111,6 +133,8 @@ async def test_correct_emoji_approves(jr):
 
     bot.approve_chat_join_request.assert_awaited_once_with(CHAT_ID, USER_ID)
     assert "одобрена" in callback.message.edit_text.await_args.args[0]
+    assert bot.send_message.await_args.args[0] == ADMIN_ID
+    assert "принят в чат" in bot.send_message.await_args.args[1]
 
 
 @pytest.mark.asyncio

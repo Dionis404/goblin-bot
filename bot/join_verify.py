@@ -33,8 +33,6 @@ from shared.text import esc
 router = Router()
 log = logging.getLogger(__name__)
 
-router.chat_join_request.filter(F.chat.id == config.JOIN_VERIFY_CHAT_ID)
-
 EMOJI_POOL = ["🌻", "🍄", "🥕", "🌽", "🍓", "🐔", "🐄", "🍎", "🥔", "🌾"]
 CHOICES = 3
 MAX_ATTEMPTS = 3
@@ -95,7 +93,7 @@ async def _notify_admin(bot: Bot, text: str) -> None:
         log.exception("Не удалось отправить админу уведомление о заявке в чат")
 
 
-@router.chat_join_request()
+@router.chat_join_request(F.chat.id == config.JOIN_VERIFY_CHAT_ID)
 async def handle_join_request(request: ChatJoinRequest, bot: Bot):
     user = request.from_user
     correct, options = _new_challenge()
@@ -124,6 +122,30 @@ async def handle_join_request(request: ChatJoinRequest, bot: Bot):
         return
 
     await join_requests.set_message_id(pool, request.chat.id, user.id, sent.message_id)
+    await _notify_admin(
+        bot,
+        f"🆕 Новая заявка в чат от {_who(user.username, user.full_name, user.id)}.\n"
+        f"Бот отправил правила и капчу — ждём ответа (до 24 ч).",
+    )
+
+
+@router.chat_join_request()
+async def handle_unverified_join_request(request: ChatJoinRequest, bot: Bot):
+    """
+    Заявка в чат, для которого автопроверка не включена (JOIN_VERIFY_CHAT_ID не
+    задан или указан другой чат) — бот человеку не пишет, но админ должен узнать
+    о заявке, иначе она молча висит в настройках группы.
+    """
+    user = request.from_user
+    chat = f"«{esc(request.chat.title)}»" if request.chat.title else "чат"
+    await _notify_admin(
+        bot,
+        f"🆕 Заявка в {chat} (<code>{request.chat.id}</code>) от "
+        f"{_who(user.username, user.full_name, user.id)}.\n"
+        f"⚠️ Автопроверка для этого чата не включена (JOIN_VERIFY_CHAT_ID = "
+        f"<code>{esc(config.JOIN_VERIFY_CHAT_ID, empty='не задан')}</code>) — "
+        f"бот человеку не писал, заявка ждёт ручного решения в настройках группы.",
+    )
 
 
 @router.callback_query(F.data.startswith("join:"))
@@ -288,6 +310,11 @@ async def _approve(callback: CallbackQuery, bot: Bot, row) -> None:
         return
 
     await callback.message.edit_text("✅ Спасибо! Заявка одобрена — добро пожаловать в чат 🎉")
+    await _notify_admin(
+        bot,
+        f"✅ {_who(row['username'], row['full_name'], row['user_id'])} прошёл проверку "
+        f"и принят в чат.",
+    )
 
 
 async def _wrong_answer(callback: CallbackQuery, bot: Bot, row) -> None:
