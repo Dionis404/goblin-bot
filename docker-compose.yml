@@ -36,7 +36,8 @@ services:
       SFL_API_KEY: ${SFL_API_KEY}
       SFL_PROXY: ${SFL_PROXY:-}
       FARM_URL_TEMPLATE: ${FARM_URL_TEMPLATE:-https://sunflower-land.com/play/#/visit/{farm_id}}
-      API_RATE_PER_SEC: ${API_RATE_PER_SEC:-2}
+      API_RATE_PER_SEC: ${API_RATE_PER_SEC:-0.15}
+      TICKETS_LEADERBOARD_ENABLED: ${TICKETS_LEADERBOARD_ENABLED:-false}
       API_CONCURRENCY: ${API_CONCURRENCY:-1}
       USER_COOLDOWN_SEC: ${USER_COOLDOWN_SEC:-5}
       API_MAX_RETRIES: ${API_MAX_RETRIES:-3}
@@ -80,6 +81,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       BOT_TOKEN: "not-used-by-api"
       SFL_API_KEY: ${SFL_API_KEY}
+      API_RATE_PER_SEC: ${API_RATE_PER_SEC:-0.15}
     networks:
       - shared-net
     dns:

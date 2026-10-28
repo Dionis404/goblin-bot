@@ -58,6 +58,13 @@ async def refresh_telegram_stats_loop(bot: Bot) -> None:
 
 async def tickets_leaderboard_loop() -> None:
     """Почасовой снэпшот топ-500 + точного места отслеживаемых ферм в лидерборде тикетов."""
+    if not config.TICKETS_LEADERBOARD_ENABLED:
+        log.info(
+            "TICKETS_LEADERBOARD_ENABLED=false — лидерборд тикетов собирает sfl-collector, "
+            "здесь сбор выключен"
+        )
+        return
+
     from jobs.tickets_leaderboard import run_tickets_leaderboard
 
     while True:
