@@ -58,6 +58,7 @@ services:
       JOIN_VERIFY_CHAT_ID: ${JOIN_VERIFY_CHAT_ID:-}
       CHAT_RULES_URL: ${CHAT_RULES_URL:-}
       REQUIRED_CHANNEL: ${REQUIRED_CHANNEL:-}
+      TELEGRAM_API_BASE: ${TELEGRAM_API_BASE:-}
     networks:
       - shared-net
     dns:
