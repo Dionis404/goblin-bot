@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeDefault
 
@@ -211,9 +212,13 @@ async def main():
             "Локально — в .env, на сервере — в переменных стека Portainer."
         )
 
-    # Если задан прокси (Telegram заблокирован в РФ) — гоним трафик через него
+    # TELEGRAM_API_BASE (локальный Bot API-сервер) имеет приоритет над прокси
+    api_base = os.environ.get("TELEGRAM_API_BASE", "").strip()
     session = None
-    if config.TELEGRAM_PROXY:
+    if api_base:
+        session = AiohttpSession(api=TelegramAPIServer.from_base(api_base))
+        log.info("Использую Telegram API base: %s", api_base)
+    elif config.TELEGRAM_PROXY:
         session = AiohttpSession(proxy=config.TELEGRAM_PROXY)
         # Только схема и хост — в URL прокси может быть логин:пароль
         proxy_url = urlsplit(config.TELEGRAM_PROXY)
