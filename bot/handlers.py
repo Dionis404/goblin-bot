@@ -9,11 +9,14 @@ from aiogram.types import CallbackQuery, Message
 from bot import sfl_api
 from bot.keyboards import confirm_keyboard, dispute_keyboard, menu_keyboard, unlink_keyboard
 from bot.subscriber_notify import SETTING_KEY as SUBSCRIBER_NOTIFY_KEY
-from shared import bot_settings, config, db, farm_cache, tickets_leaderboard
+from shared import bot_settings, config, db, tickets_leaderboard
 from shared.text import esc, split_message
 
 router = Router()
 log = logging.getLogger(__name__)
+
+# Максимальный номер фермы — предел BIGINT в БД (farmers.farm_id BIGINT).
+MAX_FARM_ID = 2**63 - 1
 
 # Бот обрабатывает сообщения ТОЛЬКО в личке — в группах молчит
 router.message.filter(F.chat.type == "private")
@@ -36,7 +39,7 @@ def _parse_farm_id(raw: str) -> int | None:
     if not raw.isdigit():
         return None
     farm_id = int(raw)
-    if not 0 < farm_id <= farm_cache.MAX_FARM_ID:
+    if not 0 < farm_id <= MAX_FARM_ID:
         return None
     return farm_id
 
@@ -284,6 +287,13 @@ async def refresh_lp(message: Message):
     if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
         return
 
+    if not config.LP_LEADERBOARD_ENABLED:
+        await message.answer(
+            "ℹ️ LP-лидерборд отключён (LP_LEADERBOARD_ENABLED=false) — "
+            "фича заморожена до выноса в отдельный сервис."
+        )
+        return
+
     status_msg = await message.answer("🔄 Собираю лидерборд LP (может занять минуту)…")
     try:
         from jobs.lp_leaderboard import run_lp_leaderboard
@@ -303,24 +313,14 @@ async def refresh_lp(message: Message):
 
 @router.message(Command("refresh_farms"))
 async def refresh_farms(message: Message):
-    """Ручной прогон ежедневного обновления данных фермеров сообщества (farmers + farm_cache)."""
+    """Обновление данных фермеров переехало в sfl-collector — команда оставлена как пояснение."""
     if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
         return
 
-    status_msg = await message.answer("🔄 Обновляю данные фермеров сообщества (может занять минуту)…")
-    try:
-        from jobs.daily_refresh import run_daily_refresh
-        result = await run_daily_refresh()
-    except Exception:
-        log.exception("Ошибка ручного обновления данных фермеров")
-        await status_msg.edit_text("⚠️ Не удалось обновить фермеров, смотри логи.")
-        return
-
-    await status_msg.edit_text(
-        f"✅ Обновление завершено.\n"
-        f"Успешно: <b>{result['succeeded']}</b>\n"
-        f"Пропущено: <b>{result['skipped']}</b>\n"
-        f"С ошибкой: <b>{result['failed']}</b>"
+    await message.answer(
+        "ℹ️ Ручного обновления больше нет: данные фермеров сообщества "
+        "(xp/balance/coins/ник + farm_cache) теперь обновляет <b>sfl-collector</b> "
+        "из ночного дампа игры, раз в сутки."
     )
 
 
@@ -352,37 +352,18 @@ async def backfill_post_images(message: Message):
 async def tickets_check(message: Message):
     """
     Сводка по tracked-фермерам из последних снэпшотов лидерборда тикетов.
-    Сам сбор запускает только если он не передан в sfl-collector
-    (TICKETS_LEADERBOARD_ENABLED) — иначе ручной прогон дал бы двойные
-    снимки в top500_snapshots и лишние запросы к SFL в обход общего лимита.
+    Сам сбор делает sfl-collector — ручной прогон отсюда упразднён, чтобы не
+    плодить двойные снимки в top500_snapshots и лишние запросы к SFL API
+    в обход общего лимита.
     """
     if message.from_user.id not in config.ADMIN_TELEGRAM_IDS:
         return
 
-    if config.TICKETS_LEADERBOARD_ENABLED:
-        status_msg = await message.answer(
-            "🔄 Проверяю лидерборд тикетов (топ-500 + отслеживаемые фермы)…"
-        )
-        try:
-            from jobs.tickets_leaderboard import run_tickets_leaderboard
-            result = await run_tickets_leaderboard()
-        except Exception:
-            log.exception("Ошибка ручной проверки лидерборда тикетов")
-            await status_msg.edit_text("⚠️ Не удалось выполнить проверку, смотри логи.")
-            return
-        header = (
-            f"✅ Прогон завершён: сохранено <b>{result['saved']}</b>, "
-            f"пропущено <b>{result['skipped']}</b>, "
-            f"из топ-500 без запроса <b>{result['from_top500']}</b>, "
-            f"вновь исключено <b>{result['excluded']}</b> "
-            f"(всего <b>{result['total']}</b> tracked).\n"
-        )
-    else:
-        status_msg = await message.answer("🔄 Собираю сводку по снэпшотам…")
-        header = (
-            "ℹ️ Лидерборд тикетов собирает <b>sfl-collector</b> — здесь только сводка "
-            "по его последним снэпшотам, без нового прогона.\n"
-        )
+    status_msg = await message.answer("🔄 Собираю сводку по снэпшотам…")
+    header = (
+        "ℹ️ Лидерборд тикетов собирает <b>sfl-collector</b> — здесь только сводка "
+        "по его последним снэпшотам.\n"
+    )
 
     pool = await db.get_pool()
     now = datetime.now(timezone.utc)
@@ -515,11 +496,12 @@ async def cmd_admin(message: Message):
 
     await message.answer(
         "🛠 <b>Админские команды</b>\n\n"
-        "/refresh_lp — ручной пересбор LP-лидерборда пула FLOWER/USDC\n"
-        "/refresh_farms — ручное обновление xp/balance/coins/ника всех фермеров сообщества\n"
+        "/refresh_lp — ручной пересбор LP-лидерборда пула FLOWER/USDC "
+        "(работает при LP_LEADERBOARD_ENABLED=true)\n"
+        "/refresh_farms — устарело: данные фермеров обновляет sfl-collector из ночного дампа\n"
         "/backfill_post_images — восстановление картинок старых постов канала\n"
         "/tickets_check — сводка по tracked-фермам из последних снэпшотов лидерборда тикетов "
-        "(прогон сбора — только если он не передан в sfl-collector)\n"
+        "(сбор делает sfl-collector)\n"
         "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
         "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
         "/whois &lt;farm_id | @ник | telegram_id&gt; — кто привязал ферму\n"

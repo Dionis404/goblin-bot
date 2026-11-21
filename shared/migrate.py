@@ -3,8 +3,8 @@
 
 Запуск: python -m shared.migrate — в docker-compose это отдельный
 одноразовый сервис `migrate`, после успешного завершения которого
-стартуют goblin-bot и goblin-api (depends_on: service_completed_successfully).
-Упала миграция — бот и API не стартуют со схемой, не совпадающей с кодом.
+стартует goblin-bot (depends_on: service_completed_successfully).
+Упала миграция — бот не стартует со схемой, не совпадающей с кодом.
 
 - Применённые миграции учитываются в таблице goblin_bot_migrations. Не
   schema_migrations: БД sfl общая, и таблица с таким именем у другого

@@ -26,9 +26,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("goblin-bot")
 
 TELEGRAM_STATS_INTERVAL_SEC = 900  # раз в 15 минут — данные не горят, на сайте свой кэш на 10 мин
-TICKETS_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой снэпшот топ-500 + мест отслеживаемых ферм
 LP_LEADERBOARD_INTERVAL_SEC = 3600  # почасовой пересбор LP-лидерборда пула FLOWER/USDC
-DAILY_REFRESH_INTERVAL_SEC = 86400  # раз в сутки — батч-прогрев farm_cache подписанных ферм
 JOIN_VERIFY_CHECK_INTERVAL_SEC = 300  # напоминания/таймауты заявок в чат
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
@@ -37,12 +35,18 @@ WEEKLY_NOTIFY_HOUR = 3
 WEEKLY_NOTIFY_CHECK_INTERVAL_SEC = 300  # как часто перепроверять, не пропущено ли окно
 WEEKLY_NOTIFY_LAST_SENT_KEY = "tickets_weekly_notify_last_sent"
 
-# Новая глава SFL стартует 2 ноября 2026, 00:00 UTC — игра обнуляет тикеты,
-# поэтому старое farmers.tickets_excluded (низкий ранг прошлой главы) больше
-# не актуально и должно быть сброшено один раз при наступлении этого момента.
-NEW_CHAPTER_START = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+# Со стартом новой главы SFL игра обнуляет тикеты, поэтому старое
+# farmers.tickets_excluded (низкий ранг прошлой главы) неактуально и должно
+# быть сброшено один раз при наступлении этого момента. Дата — из env
+# (формат ISO 8601), на каждую новую главу обновляется переменная, а не код.
+NEW_CHAPTER_START = datetime.fromisoformat(
+    os.environ.get("NEW_CHAPTER_START", "2026-11-02T00:00:00+00:00")
+)
+if NEW_CHAPTER_START.tzinfo is None:
+    NEW_CHAPTER_START = NEW_CHAPTER_START.replace(tzinfo=timezone.utc)
 CHAPTER_RESET_CHECK_INTERVAL_SEC = 300
-CHAPTER_RESET_DONE_KEY = "tickets_excluded_reset_2026_11_02"
+# Ключ привязан к дате главы: новая глава = новый ключ = новый одноразовый сброс.
+CHAPTER_RESET_DONE_KEY = "tickets_excluded_reset_" + NEW_CHAPTER_START.strftime("%Y_%m_%d")
 
 
 async def refresh_telegram_stats_loop(bot: Bot) -> None:
@@ -58,25 +62,6 @@ async def refresh_telegram_stats_loop(bot: Bot) -> None:
         except Exception:
             log.exception("Ошибка обновления статистики канала @%s", config.TELEGRAM_POSTS_CHANNEL)
         await asyncio.sleep(TELEGRAM_STATS_INTERVAL_SEC)
-
-
-async def tickets_leaderboard_loop() -> None:
-    """Почасовой снэпшот топ-500 + точного места отслеживаемых ферм в лидерборде тикетов."""
-    if not config.TICKETS_LEADERBOARD_ENABLED:
-        log.info(
-            "TICKETS_LEADERBOARD_ENABLED=false — лидерборд тикетов собирает sfl-collector, "
-            "здесь сбор выключен"
-        )
-        return
-
-    from jobs.tickets_leaderboard import run_tickets_leaderboard
-
-    while True:
-        try:
-            await run_tickets_leaderboard()
-        except Exception:
-            log.exception("Ошибка почасового снэпшота лидерборда тикетов")
-        await asyncio.sleep(TICKETS_LEADERBOARD_INTERVAL_SEC)
 
 
 def _current_notify_window(now: datetime) -> str | None:
@@ -102,10 +87,18 @@ async def game_update_notify_loop(bot: Bot) -> None:
 
 
 async def lp_leaderboard_loop() -> None:
-    """Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base)."""
+    """Почасовой пересбор LP-лидерборда пула FLOWER/USDC (Uniswap v3, Base).
+
+    По умолчанию выключен (LP_LEADERBOARD_ENABLED=false): фича заморожена
+    до выноса в отдельный сервис с записью истории.
+    """
+    if not config.LP_LEADERBOARD_ENABLED:
+        log.info("LP_LEADERBOARD_ENABLED=false — LP-лидерборд отключён")
+        return
     if not os.environ.get("GRAPH_API_KEY") or not os.environ.get("SUBGRAPH_ID"):
         log.warning(
-            "GRAPH_API_KEY/SUBGRAPH_ID не заданы — почасовой пересбор LP-лидерборда пропущен"
+            "LP_LEADERBOARD_ENABLED=true, но GRAPH_API_KEY/SUBGRAPH_ID не заданы — "
+            "почасовой пересбор LP-лидерборда пропущен"
         )
         return
 
@@ -117,18 +110,6 @@ async def lp_leaderboard_loop() -> None:
         except Exception:
             log.exception("Ошибка почасового пересбора LP-лидерборда")
         await asyncio.sleep(LP_LEADERBOARD_INTERVAL_SEC)
-
-
-async def daily_refresh_loop() -> None:
-    """Раз в сутки обновляет данные (xp/balance/coins/ник) всех фермеров сообщества."""
-    from jobs.daily_refresh import run_daily_refresh
-
-    while True:
-        try:
-            await run_daily_refresh()
-        except Exception:
-            log.exception("Ошибка ежедневного батч-прогрева farm_cache")
-        await asyncio.sleep(DAILY_REFRESH_INTERVAL_SEC)
 
 
 async def join_verify_loop(bot: Bot) -> None:
@@ -252,11 +233,9 @@ async def main():
     await db.get_pool()
 
     stats_task = asyncio.create_task(refresh_telegram_stats_loop(bot))
-    tickets_task = asyncio.create_task(tickets_leaderboard_loop())
     weekly_notify_task = asyncio.create_task(tickets_weekly_notify_loop(bot))
     game_update_task = asyncio.create_task(game_update_notify_loop(bot))
     lp_leaderboard_task = asyncio.create_task(lp_leaderboard_loop())
-    daily_refresh_task = asyncio.create_task(daily_refresh_loop())
     chapter_reset_task = asyncio.create_task(tickets_excluded_reset_loop())
     join_verify_task = asyncio.create_task(join_verify_loop(bot))
 
@@ -271,11 +250,9 @@ async def main():
     finally:
         join_verify_task.cancel()
         stats_task.cancel()
-        tickets_task.cancel()
         weekly_notify_task.cancel()
         game_update_task.cancel()
         lp_leaderboard_task.cancel()
-        daily_refresh_task.cancel()
         chapter_reset_task.cancel()
         await db.close_pool()
 

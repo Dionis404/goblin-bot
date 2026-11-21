@@ -1,8 +1,8 @@
 """
 Защита от превышения rate limit SFL API и спама пользователей.
 
-Классы общие для бота и goblin-api; экземпляры у каждого процесса свои
-(bot/throttle.py, shared/farm_cache.py).
+Классы общие для бота и фоновых задач; экземпляры у каждого процесса свои
+(bot/throttle.py).
 """
 import asyncio
 import time

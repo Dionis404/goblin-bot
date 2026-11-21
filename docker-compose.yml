@@ -1,6 +1,6 @@
 services:
   # Одноразовый: применяет новые миграции из migrations/ и завершается.
-  # Бот и API стартуют только после его успешного завершения.
+  # Бот стартует только после его успешного завершения.
   migrate:
     # Без container_name: одноразовый контейнер остаётся после каждого запуска,
     # и фиксированное имя Portainer считает конфликтом при обновлении стека
@@ -38,7 +38,8 @@ services:
       SFL_PROXY: ${SFL_PROXY:-}
       FARM_URL_TEMPLATE: ${FARM_URL_TEMPLATE:-https://sunflower-land.com/play/#/visit/{farm_id}}
       API_RATE_PER_SEC: ${API_RATE_PER_SEC:-0.15}
-      TICKETS_LEADERBOARD_ENABLED: ${TICKETS_LEADERBOARD_ENABLED:-false}
+      LP_LEADERBOARD_ENABLED: ${LP_LEADERBOARD_ENABLED:-false}
+      NEW_CHAPTER_START: ${NEW_CHAPTER_START:-2026-11-02T00:00:00+00:00}
       API_CONCURRENCY: ${API_CONCURRENCY:-1}
       USER_COOLDOWN_SEC: ${USER_COOLDOWN_SEC:-5}
       API_MAX_RETRIES: ${API_MAX_RETRIES:-3}
@@ -64,32 +65,6 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-
-  goblin-api:
-    image: ghcr.io/dionis404/goblin-bot:latest
-    container_name: goblin-api
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
-    restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    ports:
-      - "127.0.0.1:8000:8000"
-    environment:
-      DB_HOST: ${DB_HOST:-postgres-main}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-sfl}
-      DB_USER: ${DB_USER:-goblin}
-      DB_PASSWORD: ${DB_PASSWORD}
-      BOT_TOKEN: "not-used-by-api"
-      SFL_API_KEY: ${SFL_API_KEY}
-      API_RATE_PER_SEC: ${API_RATE_PER_SEC:-0.15}
-    networks:
-      - shared-net
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-  
 
 networks:
   shared-net:

@@ -1,9 +1,9 @@
-"""Тесты для bot/main.py: окно еженедельного отчёта, флаг сбора лидерборда, логирование."""
+"""Тесты для bot/main.py: окно еженедельного отчёта, LP-флаг, дата главы, логирование."""
 import asyncio
 import logging
 import sys
 import types
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from bot import main as bot_main
@@ -42,43 +42,70 @@ def test_window_advances_to_next_monday():
     assert _current_notify_window(now) == "2026-09-07"
 
 
-# --- Лидерборд тикетов перенесён в sfl-collector ---
+# --- LP-лидерборд: флаг выключения ---
 
-def _fake_tickets_job(monkeypatch, run):
-    fake_job = types.ModuleType("jobs.tickets_leaderboard")
-    fake_job.run_tickets_leaderboard = run
-    monkeypatch.setitem(sys.modules, "jobs.tickets_leaderboard", fake_job)
+def _fake_lp_job(monkeypatch, run):
+    fake_job = types.ModuleType("jobs.lp_leaderboard")
+    fake_job.run_lp_leaderboard = run
+    monkeypatch.setitem(sys.modules, "jobs.lp_leaderboard", fake_job)
 
 
-def test_tickets_loop_exits_without_api_calls_when_disabled(monkeypatch):
-    monkeypatch.setattr(bot_main.config, "TICKETS_LEADERBOARD_ENABLED", False)
+def test_lp_loop_exits_without_work_when_disabled(monkeypatch):
+    monkeypatch.setattr(bot_main.config, "LP_LEADERBOARD_ENABLED", False)
     called = []
 
-    async def run_tickets_leaderboard():
+    async def run_lp_leaderboard():
         called.append(True)
 
-    _fake_tickets_job(monkeypatch, run_tickets_leaderboard)
+    _fake_lp_job(monkeypatch, run_lp_leaderboard)
 
     # выключенный цикл должен сразу завершиться, а не висеть в while True
-    asyncio.run(asyncio.wait_for(bot_main.tickets_leaderboard_loop(), timeout=1))
+    asyncio.run(asyncio.wait_for(bot_main.lp_leaderboard_loop(), timeout=1))
     assert called == []
 
 
-def test_tickets_loop_runs_job_when_enabled(monkeypatch):
-    monkeypatch.setattr(bot_main.config, "TICKETS_LEADERBOARD_ENABLED", True)
+def test_lp_loop_skips_without_graph_keys(monkeypatch):
+    monkeypatch.setattr(bot_main.config, "LP_LEADERBOARD_ENABLED", True)
+    monkeypatch.delenv("GRAPH_API_KEY", raising=False)
+    monkeypatch.delenv("SUBGRAPH_ID", raising=False)
     called = []
 
-    async def run_tickets_leaderboard():
+    async def run_lp_leaderboard():
+        called.append(True)
+
+    _fake_lp_job(monkeypatch, run_lp_leaderboard)
+
+    asyncio.run(asyncio.wait_for(bot_main.lp_leaderboard_loop(), timeout=1))
+    assert called == []
+
+
+def test_lp_loop_runs_job_when_enabled(monkeypatch):
+    monkeypatch.setattr(bot_main.config, "LP_LEADERBOARD_ENABLED", True)
+    monkeypatch.setenv("GRAPH_API_KEY", "key")
+    monkeypatch.setenv("SUBGRAPH_ID", "subgraph")
+    called = []
+
+    async def run_lp_leaderboard():
         called.append(True)
         raise asyncio.CancelledError  # выходим из бесконечного цикла после первого запуска
 
-    _fake_tickets_job(monkeypatch, run_tickets_leaderboard)
+    _fake_lp_job(monkeypatch, run_lp_leaderboard)
 
     try:
-        asyncio.run(bot_main.tickets_leaderboard_loop())
+        asyncio.run(bot_main.lp_leaderboard_loop())
     except asyncio.CancelledError:
         pass
     assert called == [True]
+
+
+# --- Дата новой главы из env ---
+
+def test_chapter_reset_key_follows_chapter_date():
+    # Ключ привязан к дате главы: новая глава = новый ключ = новый одноразовый сброс
+    assert bot_main.CHAPTER_RESET_DONE_KEY.startswith("tickets_excluded_reset_")
+    assert bot_main.NEW_CHAPTER_START.tzinfo is not None
+    assert bot_main.NEW_CHAPTER_START.strftime("%Y_%m_%d") in bot_main.CHAPTER_RESET_DONE_KEY
+    assert bot_main.NEW_CHAPTER_START == datetime(2026, 11, 2, tzinfo=timezone.utc)
 
 
 def test_default_api_rate_respects_community_limit():
