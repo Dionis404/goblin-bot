@@ -9,7 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Код
 COPY shared/ ./shared/
 COPY bot/ ./bot/
-COPY api/ ./api/
 COPY jobs/ ./jobs/
 COPY migrations/ ./migrations/
 
@@ -17,5 +16,4 @@ COPY migrations/ ./migrations/
 RUN useradd --system --no-create-home app
 USER app
 
-# Команда переопределяется в docker-compose (бот или api)
 CMD ["python", "-m", "bot.main"]
