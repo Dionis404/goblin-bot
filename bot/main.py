@@ -223,6 +223,8 @@ async def main():
     commands = [
         BotCommand(command="start", description="Привязать ферму"),
         BotCommand(command="tracking_lb", description="Отслеживание лидерборда тикетов"),
+        BotCommand(command="tracking_on", description="Включить отслеживание тикетов"),
+        BotCommand(command="tracking_off", description="Выключить отслеживание тикетов"),
     ]
     await bot.delete_my_commands(scope=BotCommandScopeDefault())
     await bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())

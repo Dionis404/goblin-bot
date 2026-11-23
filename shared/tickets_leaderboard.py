@@ -61,6 +61,26 @@ async def set_tracking(pool: asyncpg.Pool, telegram_id: int, enabled: bool) -> N
     )
 
 
+async def get_tracked_with_top500(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    """
+    Tracked-фермеры + их место в последнем снэпшоте топ-500.
+    top500_rank = NULL -> ферма сейчас вне топ-500.
+    """
+    return await pool.fetch(
+        """
+        SELECT f.farm_id, f.telegram_username, f.tickets_excluded,
+               t.rank AS top500_rank, t.tickets AS top500_tickets,
+               t.taken_at AS top500_taken_at
+        FROM farmers f
+        LEFT JOIN top500_snapshots t
+          ON t.farm_id = f.farm_id
+         AND t.taken_at = (SELECT MAX(taken_at) FROM top500_snapshots)
+        WHERE f.tickets_tracked = true
+        ORDER BY t.rank NULLS LAST, f.farm_id
+        """
+    )
+
+
 # --- Топ-500 целиком (top500_snapshots) — чтение ---
 
 async def get_latest_top500(pool: asyncpg.Pool) -> list[asyncpg.Record]:

@@ -148,3 +148,111 @@ async def test_tickets_check_shows_collector_summary_only(monkeypatch):
         await handlers.tickets_check(message)
 
     assert "sfl-collector" in status_msg.edit_text.await_args.args[0]
+
+
+# --- Отслеживание тикетов: тоггл, команды, уведомление админа ---
+
+def _message(user_id: int, username: str | None = "player"):
+    message = MagicMock()
+    message.from_user.id = user_id
+    message.from_user.username = username
+    message.from_user.full_name = "Player One"
+    message.answer = AsyncMock()
+    message.bot.send_message = AsyncMock()
+    return message
+
+
+@pytest.mark.asyncio
+async def test_tracking_toggle_notifies_admin(monkeypatch):
+    """Кнопка вкл/выкл отслеживания шлёт уведомление админу."""
+    monkeypatch.setattr(handlers.config, "NOTIFY_ADMIN_TELEGRAM_ID", ADMIN_ID)
+    callback = _callback("tickets_tracking:on", user_id=42)
+    callback.from_user.username = "newbie"
+    callback.from_user.full_name = "New Bee"
+    set_tracking = AsyncMock()
+
+    with patch("bot.handlers.db.get_farmer_by_telegram", AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.set_tracking", set_tracking):
+        await handlers.toggle_tickets_tracking(callback)
+
+    set_tracking.assert_awaited_once()
+    notify = callback.bot.send_message.await_args
+    assert notify.args[0] == ADMIN_ID
+    assert "включил" in notify.args[1]
+    assert "#77" in notify.args[1]
+    assert "включено" in callback.message.edit_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_tracking_off_notifies_admin(monkeypatch):
+    monkeypatch.setattr(handlers.config, "NOTIFY_ADMIN_TELEGRAM_ID", ADMIN_ID)
+    callback = _callback("tickets_tracking:off", user_id=42)
+    callback.from_user.username = "newbie"
+    callback.from_user.full_name = "New Bee"
+
+    with patch("bot.handlers.db.get_farmer_by_telegram", AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.set_tracking", AsyncMock()):
+        await handlers.toggle_tickets_tracking(callback)
+
+    assert "выключил" in callback.bot.send_message.await_args.args[1]
+    assert "выключено" in callback.message.edit_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_tracking_on_without_farmer_asks_to_bind(monkeypatch):
+    monkeypatch.setattr(handlers.config, "NOTIFY_ADMIN_TELEGRAM_ID", ADMIN_ID)
+    message = _message(user_id=42)
+
+    with patch("bot.handlers.db.get_farmer_by_telegram", AsyncMock(return_value=None)):
+        await handlers.cmd_tracking_on(message)
+
+    assert "привязать" in message.answer.await_args.args[0]
+    message.bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tracking_on_enables_and_notifies(monkeypatch):
+    monkeypatch.setattr(handlers.config, "NOTIFY_ADMIN_TELEGRAM_ID", ADMIN_ID)
+    message = _message(user_id=42)
+    set_tracking = AsyncMock()
+
+    with patch("bot.handlers.db.get_farmer_by_telegram", AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.set_tracking", set_tracking):
+        await handlers.cmd_tracking_on(message)
+
+    assert set_tracking.await_args.args[2] is True
+    assert "включено" in message.answer.await_args.args[0]
+    assert message.bot.send_message.await_args.args[0] == ADMIN_ID
+
+
+@pytest.mark.asyncio
+async def test_tracked_top_ignored_for_non_admin():
+    message = _message(user_id=1)
+    await handlers.cmd_tracked_top(message)
+    message.answer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tracked_top_lists_in_and_out_of_top500(monkeypatch):
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    message = _message(user_id=ADMIN_ID)
+    taken = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {"farm_id": 77, "telegram_username": "squatter", "tickets_excluded": False,
+         "top500_rank": 5, "top500_tickets": 120, "top500_taken_at": taken},
+        {"farm_id": 88, "telegram_username": None, "tickets_excluded": True,
+         "top500_rank": None, "top500_tickets": None, "top500_taken_at": taken},
+    ]
+
+    with patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.get_tracked_with_top500",
+               AsyncMock(return_value=rows)):
+        await handlers.cmd_tracked_top(message)
+
+    text = message.answer.await_args.args[0]
+    assert "#5" in text and "120" in text
+    assert "вне топ-500" in text
+    assert "1</b> из 2" in text

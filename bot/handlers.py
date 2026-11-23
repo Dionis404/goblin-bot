@@ -398,6 +398,91 @@ async def tickets_check(message: Message):
         await message.answer(chunk)
 
 
+@router.message(Command("tracked_top"))
+async def cmd_tracked_top(message: Message):
+    """
+    Кто из tracked-фермеров сейчас в топ-500 лидерборда тикетов.
+    Данные — из последнего почасового снэпшота top500_snapshots (собирает sfl-collector).
+    """
+    if not _is_admin(message.from_user.id):
+        return
+
+    pool = await db.get_pool()
+    rows = await tickets_leaderboard.get_tracked_with_top500(pool)
+    if not rows:
+        await message.answer("Пока нет ни одной фермы с включённым отслеживанием тикетов.")
+        return
+
+    taken_at = rows[0]["top500_taken_at"]
+    if taken_at:
+        age_min = int((datetime.now(timezone.utc) - taken_at).total_seconds() // 60)
+        snap_note = f"снэпшот топ-500 от {taken_at:%Y-%m-%d %H:%M} UTC ({age_min} мин назад)"
+    else:
+        snap_note = "снэпшотов топ-500 ещё нет"
+
+    in_top = [r for r in rows if r["top500_rank"] is not None]
+    lines = [
+        f"🏆 <b>Tracked-фермеры в топ-500</b> ({snap_note})\n",
+        f"В топ-500: <b>{len(in_top)}</b> из {len(rows)} tracked.\n",
+    ]
+    for r in rows:
+        name = (
+            f"@{esc(r['telegram_username'])}"
+            if r["telegram_username"]
+            else f"#{r['farm_id']}"
+        )
+        excluded_note = " ⛔" if r["tickets_excluded"] else ""
+        if r["top500_rank"] is not None:
+            lines.append(
+                f"{name} (#{r['farm_id']}) — <b>#{r['top500_rank']}</b>, "
+                f"{r['top500_tickets']} тикетов{excluded_note}"
+            )
+        else:
+            lines.append(f"{name} (#{r['farm_id']}) — вне топ-500{excluded_note}")
+
+    first, *rest = split_message("\n".join(lines))
+    await message.answer(first)
+    for chunk in rest:
+        await message.answer(chunk)
+
+
+def _tracking_status_text(farmer, enabled: bool) -> str:
+    status = "включено ✅" if enabled else "выключено"
+    return (
+        f"🎟 Отслеживание лидерборда тикетов — ферма <b>#{farmer['farm_id']}</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
+        f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе."
+    )
+
+
+async def _notify_admin_about_tracking(bot, user, farmer, enabled: bool):
+    """Сообщение админу о включении/выключении отслеживания тикетов."""
+    if config.NOTIFY_ADMIN_TELEGRAM_ID is None:
+        return
+    try:
+        who = f"@{esc(user.username)}" if user.username else esc(user.full_name)
+        action = "включил ✅" if enabled else "выключил ❌"
+        await bot.send_message(
+            config.NOTIFY_ADMIN_TELEGRAM_ID,
+            f"🎟 {who} (<code>{user.id}</code>) {action} отслеживание тикетов — "
+            f"ферма <b>#{farmer['farm_id']}</b> "
+            f"({esc(farmer['game_username'], empty='без ника')}).",
+        )
+    except Exception:
+        log.exception("Не удалось уведомить админа о смене отслеживания тикетов")
+
+
+async def _set_tracking(bot, user, enabled: bool):
+    """Общая логика для кнопки и команд /tracking_on|/tracking_off."""
+    farmer = await db.get_farmer_by_telegram(user.id)
+    if not farmer:
+        return None
+    pool = await db.get_pool()
+    await tickets_leaderboard.set_tracking(pool, user.id, enabled)
+    await _notify_admin_about_tracking(bot, user, farmer, enabled)
+    return farmer
+
+
 @router.message(Command("tracking_lb"))
 async def cmd_tracking_lb(message: Message):
     farmer = await db.get_farmer_by_telegram(message.from_user.id)
@@ -407,31 +492,48 @@ async def cmd_tracking_lb(message: Message):
         )
         return
 
-    status = "включено ✅" if farmer["tickets_tracked"] else "выключено"
     await message.answer(
-        f"🎟 Отслеживание лидерборда тикетов — ферма <b>#{farmer['farm_id']}</b>\n\n"
-        f"Статус: <b>{status}</b>\n"
-        f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
+        _tracking_status_text(farmer, farmer["tickets_tracked"]),
         reply_markup=menu_keyboard(farmer["tickets_tracked"]),
+    )
+
+
+@router.message(Command("tracking_on"))
+async def cmd_tracking_on(message: Message):
+    farmer = await _set_tracking(message.bot, message.from_user, True)
+    if not farmer:
+        await message.answer(
+            "У тебя ещё нет привязанной фермы. Пришли номер фермы, чтобы привязать её."
+        )
+        return
+    await message.answer(
+        _tracking_status_text(farmer, True), reply_markup=menu_keyboard(True)
+    )
+
+
+@router.message(Command("tracking_off"))
+async def cmd_tracking_off(message: Message):
+    farmer = await _set_tracking(message.bot, message.from_user, False)
+    if not farmer:
+        await message.answer(
+            "У тебя ещё нет привязанной фермы. Пришли номер фермы, чтобы привязать её."
+        )
+        return
+    await message.answer(
+        _tracking_status_text(farmer, False), reply_markup=menu_keyboard(False)
     )
 
 
 @router.callback_query(F.data.startswith("tickets_tracking:"))
 async def toggle_tickets_tracking(callback: CallbackQuery):
-    farmer = await db.get_farmer_by_telegram(callback.from_user.id)
+    enabled = callback.data.split(":", 1)[1] == "on"
+    farmer = await _set_tracking(callback.bot, callback.from_user, enabled)
     if not farmer:
         await callback.answer("Сначала привяжи ферму", show_alert=True)
         return
 
-    enabled = callback.data.split(":", 1)[1] == "on"
-    pool = await db.get_pool()
-    await tickets_leaderboard.set_tracking(pool, callback.from_user.id, enabled)
-
-    status = "включено ✅" if enabled else "выключено"
     await callback.message.edit_text(
-        f"🎟 Отслеживание лидерборда тикетов — ферма <b>#{farmer['farm_id']}</b>\n\n"
-        f"Статус: <b>{status}</b>\n"
-        f"Если ферма в топ-1200, место будет попадать в еженедельный отчёт в группе.",
+        _tracking_status_text(farmer, enabled),
         reply_markup=menu_keyboard(enabled),
     )
     await callback.answer()
@@ -502,6 +604,7 @@ async def cmd_admin(message: Message):
         "/backfill_post_images — восстановление картинок старых постов канала\n"
         "/tickets_check — сводка по tracked-фермам из последних снэпшотов лидерборда тикетов "
         "(сбор делает sfl-collector)\n"
+        "/tracked_top — кто из tracked-фермеров сейчас в топ-500 лидерборда тикетов\n"
         "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
         "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
         "/whois &lt;farm_id | @ник | telegram_id&gt; — кто привязал ферму\n"
