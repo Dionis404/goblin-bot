@@ -629,13 +629,13 @@ def _farmer_card(farmer) -> str:
 
 
 async def _find_farmer(query: str):
-    """@ник -> по нику в Telegram; число -> сначала farm_id, затем telegram_id."""
+    """@ник -> по нику в Telegram; число -> сначала farm_id, затем telegram_id; иначе — как ник."""
     query = query.strip()
     if query.startswith("@"):
         return await db.get_farmer_by_telegram_username(query[1:])
     farm_id = _parse_farm_id(query)
     if farm_id is None:
-        return None
+        return await db.get_farmer_by_telegram_username(query)
     return await db.get_farmer_by_farm(farm_id) or await db.get_farmer_by_telegram(farm_id)
 
 

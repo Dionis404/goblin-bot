@@ -310,3 +310,21 @@ async def test_track_rejects_bad_flag(monkeypatch):
     message.text = "/track 77 maybe"
     await handlers.cmd_track(message)
     assert "on или off" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_track_finds_player_by_plain_username(monkeypatch):
+    """/track vezdemcduck — без @ тоже ищем по нику."""
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    message = _message(user_id=ADMIN_ID)
+    message.text = "/track vezdemcduck on"
+    set_tracking = AsyncMock()
+
+    with patch("bot.handlers.db.get_farmer_by_telegram_username",
+               AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.set_tracking", set_tracking):
+        await handlers.cmd_track(message)
+
+    set_tracking.assert_awaited_once()
+    assert "включено" in message.answer.await_args.args[0]
