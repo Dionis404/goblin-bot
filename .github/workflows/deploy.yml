@@ -45,3 +45,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via Komodo
+        run: |
+          STACK="goblin-bot"
+          curl -sf -X POST https://panel.belitser.ru/write \
+            -H "X-Api-Key: ${{ secrets.KOMODO_API_KEY }}" \
+            -H "X-Api-Secret: ${{ secrets.KOMODO_API_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"DeployStack\",\"params\":{\"stack\":\"$STACK\"}}"
