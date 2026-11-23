@@ -256,3 +256,57 @@ async def test_tracked_top_lists_in_and_out_of_top500(monkeypatch):
     assert "#5" in text and "120" in text
     assert "вне топ-500" in text
     assert "1</b> из 2" in text
+
+
+# --- Админский /track ---
+
+@pytest.mark.asyncio
+async def test_track_ignored_for_non_admin():
+    message = _message(user_id=1)
+    message.text = "/track 77 on"
+    await handlers.cmd_track(message)
+    message.answer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_track_shows_status_without_on_off(monkeypatch):
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    message = _message(user_id=ADMIN_ID)
+    message.text = "/track 77"
+
+    with patch("bot.handlers.db.get_farmer_by_farm", AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_farmer_by_telegram", AsyncMock(return_value=None)):
+        await handlers.cmd_track(message)
+
+    assert "Отслеживание тикетов: выкл" in message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_track_on_sets_flag_and_notifies_player(monkeypatch):
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    message = _message(user_id=ADMIN_ID)
+    message.text = "/track @squatter on"
+    set_tracking = AsyncMock()
+
+    with patch("bot.handlers.db.get_farmer_by_telegram_username",
+               AsyncMock(return_value=_farmer())), \
+         patch("bot.handlers.db.get_pool", AsyncMock()), \
+         patch("bot.handlers.tickets_leaderboard.set_tracking", set_tracking):
+        await handlers.cmd_track(message)
+
+    set_tracking.assert_awaited_once()
+    assert set_tracking.await_args.args[1:] == (555, True)
+    assert "включено" in message.answer.await_args.args[0]
+    # игрок получил уведомление
+    player_msg = message.bot.send_message.await_args
+    assert player_msg.args[0] == 555
+    assert "Админ изменил настройку" in player_msg.args[1]
+
+
+@pytest.mark.asyncio
+async def test_track_rejects_bad_flag(monkeypatch):
+    monkeypatch.setattr(handlers.config, "ADMIN_TELEGRAM_IDS", {ADMIN_ID})
+    message = _message(user_id=ADMIN_ID)
+    message.text = "/track 77 maybe"
+    await handlers.cmd_track(message)
+    assert "on или off" in message.answer.await_args.args[0]

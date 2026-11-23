@@ -605,6 +605,8 @@ async def cmd_admin(message: Message):
         "/tickets_check — сводка по tracked-фермам из последних снэпшотов лидерборда тикетов "
         "(сбор делает sfl-collector)\n"
         "/tracked_top — кто из tracked-фермеров сейчас в топ-500 лидерборда тикетов\n"
+        "/track &lt;farm_id | @ник | telegram_id&gt; [on|off] — вкл/выкл отслеживание "
+        "тикетов за игрока (без on|off — статус), игрок получает уведомление\n"
         "/subscriber_notify on|off — уведомления в личку о подписке/отписке от канала\n"
         "/tickets_weekly_notify on|off — еженедельная рассылка отчёта по лидерборду тикетов в группу\n"
         "/whois &lt;farm_id | @ник | telegram_id&gt; — кто привязал ферму\n"
@@ -652,6 +654,60 @@ async def cmd_whois(message: Message):
         await message.answer("Привязка не найдена.")
         return
     await message.answer(_farmer_card(farmer))
+
+
+@router.message(Command("track"))
+async def cmd_track(message: Message):
+    """
+    Админское вкл/выкл отслеживания тикетов за чужую ферму:
+    /track <farm_id | @ник | telegram_id> [on|off] — без on|off просто статус.
+    """
+    if not _is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=2)
+    if len(args) < 2:
+        await message.answer("Использование: /track &lt;farm_id | @ник | telegram_id&gt; [on|off]")
+        return
+
+    enabled: bool | None = None
+    if len(args) == 3:
+        arg = args[2].strip().lower()
+        if arg not in ("on", "off"):
+            await message.answer("Второй аргумент — только on или off.")
+            return
+        enabled = arg == "on"
+
+    farmer = await _find_farmer(args[1])
+    if farmer is None:
+        await message.answer("Привязка не найдена.")
+        return
+
+    if enabled is None:
+        await message.answer(_farmer_card(farmer))
+        return
+
+    pool = await db.get_pool()
+    await tickets_leaderboard.set_tracking(pool, farmer["telegram_id"], enabled)
+
+    status = "включено ✅" if enabled else "выключено"
+    tg = f"@{esc(farmer['telegram_username'])}" if farmer["telegram_username"] else "без ника"
+    await message.answer(
+        f"🎟 Отслеживание тикетов — ферма <b>#{farmer['farm_id']}</b> "
+        f"({esc(farmer['game_username'], empty='без ника')}, {tg})\n"
+        f"Статус: <b>{status}</b>"
+    )
+
+    # Игроку — честное уведомление, что админ поменял ему настройку
+    try:
+        await message.bot.send_message(
+            farmer["telegram_id"],
+            "Админ изменил настройку отслеживания тикетов.\n\n"
+            + _tracking_status_text(farmer, enabled),
+            reply_markup=menu_keyboard(enabled),
+        )
+    except Exception:
+        log.exception("Не удалось уведомить игрока %s о смене отслеживания", farmer["telegram_id"])
 
 
 @router.message(Command("unlink"))
